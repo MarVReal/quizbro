@@ -1,0 +1,192 @@
+@import "tailwindcss";
+
+/* Each quiz picks a theme; pages wrap themselves in [data-theme]. */
+:root,
+[data-theme="grape"] {
+  --bg-from: #2b1055;
+  --bg-to: #7597de;
+  --bg-mid: #5b2a9c;
+  --accent: #ffd23f;
+  --accent-ink: #2b1055;
+}
+[data-theme="sunset"] {
+  --bg-from: #4a1942;
+  --bg-mid: #d1345b;
+  --bg-to: #ff9f1c;
+  --accent: #fff3b0;
+  --accent-ink: #4a1942;
+}
+[data-theme="ocean"] {
+  --bg-from: #021b3a;
+  --bg-mid: #0353a4;
+  --bg-to: #1fd1c1;
+  --accent: #ffe66d;
+  --accent-ink: #021b3a;
+}
+[data-theme="mint"] {
+  --bg-from: #073b3a;
+  --bg-mid: #0b6e4f;
+  --bg-to: #a7e8bd;
+  --accent: #ff7b9c;
+  --accent-ink: #073b3a;
+}
+[data-theme="candy"] {
+  --bg-from: #3a0ca3;
+  --bg-mid: #b5179e;
+  --bg-to: #ff8fab;
+  --accent: #c8f560;
+  --accent-ink: #3a0ca3;
+}
+
+@theme inline {
+  --font-sans: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-display), var(--font-body), ui-sans-serif, system-ui,
+    sans-serif;
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+}
+
+html {
+  background: #1a0b36;
+}
+
+body {
+  font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  color: #fff;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Gradient backdrop used by every page. */
+.stage {
+  min-height: 100dvh;
+  background:
+    radial-gradient(60rem 40rem at 10% -10%, color-mix(in srgb, var(--bg-to) 45%, transparent), transparent 60%),
+    radial-gradient(50rem 40rem at 110% 20%, color-mix(in srgb, var(--bg-mid) 80%, transparent), transparent 60%),
+    linear-gradient(160deg, var(--bg-from), var(--bg-mid));
+  background-attachment: fixed;
+}
+
+.font-display {
+  font-family: var(--font-display), var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0.01em;
+}
+
+/* Frosted card surface */
+.card {
+  background: rgb(255 255 255 / 0.1);
+  border: 1px solid rgb(255 255 255 / 0.18);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-radius: 1.5rem;
+}
+
+.card-solid {
+  background: #fff;
+  color: #1a0b36;
+  border-radius: 1.5rem;
+}
+
+.field {
+  width: 100%;
+  border-radius: 0.9rem;
+  border: 2px solid rgb(255 255 255 / 0.2);
+  background: rgb(0 0 0 / 0.22);
+  padding: 0.7rem 0.95rem;
+  color: #fff;
+  outline: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+.field::placeholder {
+  color: rgb(255 255 255 / 0.5);
+}
+.field:focus {
+  border-color: var(--accent);
+  background: rgb(0 0 0 / 0.3);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 1rem;
+  padding: 0.75rem 1.25rem;
+  font-weight: 800;
+  transition: transform 0.12s, box-shadow 0.12s, opacity 0.15s, background 0.15s;
+  cursor: pointer;
+}
+.btn:active:not(:disabled) {
+  transform: translateY(2px) scale(0.98);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 5px 0 color-mix(in srgb, var(--accent) 55%, black);
+}
+.btn-primary:active:not(:disabled) {
+  box-shadow: 0 2px 0 color-mix(in srgb, var(--accent) 55%, black);
+}
+.btn-ghost {
+  background: rgb(255 255 255 / 0.12);
+  border: 1px solid rgb(255 255 255 / 0.22);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.2);
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0) rotate(var(--r, 0deg));
+  }
+  50% {
+    transform: translateY(-14px) rotate(var(--r, 0deg));
+  }
+}
+.float {
+  animation: float 5s ease-in-out infinite;
+}
+
+@keyframes shake {
+  10%,
+  90% {
+    transform: translateX(-2px);
+  }
+  20%,
+  80% {
+    transform: translateX(4px);
+  }
+  30%,
+  50%,
+  70% {
+    transform: translateX(-7px);
+  }
+  40%,
+  60% {
+    transform: translateX(7px);
+  }
+}
+.shake {
+  animation: shake 0.5s both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .float,
+  .shake {
+    animation: none;
+  }
+}
+
+/* Print: QR cards on a clean white page. */
+@media print {
+  .stage {
+    background: #fff !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
