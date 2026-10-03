@@ -1,11 +1,10 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type {
   DraftQuestion,
+  HostAction,
   HostDashboard,
-  NextQuestion,
+  PlayState,
   QuizPublic,
-  Results,
-  SubmitResult,
   ThemeId,
 } from "./types";
 
@@ -78,25 +77,30 @@ export const joinQuiz = (code: string, name: string) =>
     p_name: name,
   });
 
-export const nextQuestion = (playerId: string) =>
-  rpc<NextQuestion>("next_question", { p_player_id: playerId });
+export const getPlayState = (playerId: string) =>
+  rpc<PlayState>("get_play_state", { p_player_id: playerId });
 
+/** Locks in an answer. Whether it was right is only revealed by the host. */
 export const submitAnswer = (
   playerId: string,
   questionId: string,
-  answer: number[] | string | null,
+  answer: number[] | string,
 ) =>
-  rpc<SubmitResult>("submit_answer", {
+  rpc<{ accepted: boolean }>("submit_answer", {
     p_player_id: playerId,
     p_question_id: questionId,
     p_answer: answer,
   });
 
-export const getResults = (playerId: string) =>
-  rpc<Results>("get_results", { p_player_id: playerId });
-
 export const hostDashboard = (quizId: string, hostToken: string) =>
   rpc<HostDashboard>("host_get_dashboard", {
     p_quiz_id: quizId,
     p_host_token: hostToken,
+  });
+
+export const hostAction = (quizId: string, hostToken: string, action: HostAction) =>
+  rpc<{ ok: boolean }>("host_action", {
+    p_quiz_id: quizId,
+    p_host_token: hostToken,
+    p_action: action,
   });

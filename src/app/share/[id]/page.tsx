@@ -83,7 +83,7 @@ export default function SharePage({ params }: PageProps<"/share/[id]">) {
           <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
             <QRCard title="Players scan this" badge="For players" url={playUrl} filename={`quizbro-${code}-join`}>
               <div>
-                <p className="text-sm font-bold text-white/70">or enter the code</p>
+                <p className="text-sm font-bold text-white/70">or enter the code. Players wait in a lobby until you start.</p>
                 <p className="font-display text-5xl font-bold tracking-[0.25em] text-accent">{code}</p>
                 <p className="mt-1 break-all text-xs font-semibold text-white/50">{playUrl}</p>
               </div>
@@ -93,8 +93,8 @@ export default function SharePage({ params }: PageProps<"/share/[id]">) {
           <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
             <QRCard title="Your answers dashboard" badge="Private · host only" url={hostUrl} filename={`quizbro-${code}-host`} tone="host">
               <p className="max-w-xs text-sm font-semibold text-white/75">
-                Scan on your own phone to watch answers and the leaderboard update live. Anyone with
-                this link can see the answers, so don&apos;t put it on the big screen.
+                Open this on your own device to run the game: see who joined, start it, reveal each answer and
+                show the leaderboard. Anyone with this link can control the game, so keep it private.
               </p>
             </QRCard>
           </motion.div>
@@ -102,7 +102,7 @@ export default function SharePage({ params }: PageProps<"/share/[id]">) {
 
         <div className="no-print mt-8 flex flex-wrap justify-center gap-3">
           <Link href={`/host/${id}#t=${token}`} className="btn btn-primary text-lg">
-            Open live dashboard →
+            Open host screen →
           </Link>
           <Link href={`/play/${code}`} className="btn btn-ghost">Try it as a player</Link>
           <button onClick={() => window.print()} className="btn btn-ghost">Print QR codes</button>

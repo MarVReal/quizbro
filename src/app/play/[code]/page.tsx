@@ -11,7 +11,7 @@ import {
   Spinner,
   TimerRing,
 } from "@/components/ui";
-import { getQuizPublic, getResults, joinQuiz, nextQuestion, submitAnswer } from "@/lib/api";
+import { getPlayState, getQuizPublic, joinQuiz, submitAnswer } from "@/lib/api";
 import { bigConfetti, buzz, popConfetti } from "@/lib/fx";
 import {
   clearPlayerId,
@@ -22,20 +22,20 @@ import {
 } from "@/lib/storage";
 import { OPTION_STYLES, asTheme } from "@/lib/theme";
 import type {
+  LeaderboardRow,
   PlayQuestion,
+  PlayState,
   QuizPublic,
-  Results,
   ReviewRow,
-  SubmitResult,
+  RevealInfo,
 } from "@/lib/types";
 
-type Current = { question: PlayQuestion; total: number; score: number; secondsLeft: number };
-type Feedback = { result: SubmitResult; question: PlayQuestion; score: number };
-type Phase = "loading" | "missing" | "join" | "question" | "feedback" | "done";
+const POLL_MS = { lobby: 1500, question: 1000, reveal: 1500, finished: 5000 } as const;
 
-const medal = (rank: number) => (rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : `#${rank}`);
+const medal = (rank: number) =>
+  rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : `#${rank}`;
 
-function describeCorrect(q: PlayQuestion, correct: SubmitResult["correct"]): string {
+function describeCorrect(q: PlayQuestion, correct: RevealInfo["correct"]): string {
   if (!correct) return "";
   if (q.type === "short_text") return (correct as string[]).join(" / ");
   return (correct as number[]).map((i) => q.options[i]).join(" + ");
@@ -45,52 +45,53 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
   const { code: rawCode } = use(params);
   const code = rawCode.toUpperCase();
 
-  const [phase, setPhase] = useState<Phase>("loading");
   const [quiz, setQuiz] = useState<QuizPublic | null>(null);
+  const [missing, setMissing] = useState(false);
   const [playerId, setPlayerId] = useState<string | null>(null);
+  const [state, setState] = useState<PlayState | null>(null);
   const [name, setName] = useState("");
-  const [current, setCurrent] = useState<Current | null>(null);
-  const [feedback, setFeedback] = useState<Feedback | null>(null);
-  const [results, setResults] = useState<Results | null>(null);
+  const [joinError, setJoinError] = useState<string | null>(null);
+  const [offline, setOffline] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [booting, setBooting] = useState(true);
+
+  // Per-question local input.
   const [selected, setSelected] = useState<number[]>([]);
   const [text, setText] = useState("");
+  const [locked, setLocked] = useState(false);
+  const [answerError, setAnswerError] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
-  const [streak, setStreak] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
-  const lock = useRef(false);
   const deadline = useRef(0);
-  const latest = useRef({ selected, text, current, playerId });
+  const latest = useRef({ selected, text, locked, state, playerId });
   useEffect(() => {
-    latest.current = { selected, text, current, playerId };
+    latest.current = { selected, text, locked, state, playerId };
   });
 
-  const loadNext = useCallback(async (pid: string) => {
-    lock.current = false;
-    setError(null);
+  const refresh = useCallback(async () => {
+    const pid = latest.current.playerId;
+    if (!pid) return;
     try {
-      const n = await nextQuestion(pid);
-      if (n.done) {
-        const r = await getResults(pid);
-        setResults(r);
-        setPhase("done");
-        if (r.rank <= 3 && r.player_count > 1) bigConfetti();
-        else popConfetti();
-        return;
+      const s = await getPlayState(pid);
+      setState(s);
+      setOffline(false);
+      if (s.status === "question" && !s.closed) {
+        deadline.current = performance.now() + (s.seconds_left ?? 0) * 1000;
       }
-      deadline.current = performance.now() + n.seconds_left * 1000;
-      setSelected([]);
-      setText("");
-      setSecondsLeft(n.seconds_left);
-      setCurrent({ question: n.question, total: n.total, score: n.score, secondsLeft: n.seconds_left });
-      setPhase("question");
     } catch (e) {
-      throw e instanceof Error ? e : new Error("Something went wrong");
+      const msg = e instanceof Error ? e.message : "";
+      if (msg.includes("Player not found")) {
+        // The host reset the game (or the player was removed): start over.
+        clearPlayerId(code);
+        setPlayerId(null);
+        setState(null);
+      } else {
+        setOffline(true);
+      }
     }
-  }, []);
+  }, [code]);
 
-  // Initial load: quiz info, then resume an existing player if this phone already joined.
+  // Initial load: quiz info, then resume an existing player on this phone.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -100,114 +101,147 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
         setQuiz(q);
         setName(getPlayerName());
         const pid = getPlayerId(code);
-        if (pid) {
-          try {
-            setPlayerId(pid);
-            await loadNext(pid);
-            return;
-          } catch {
-            clearPlayerId(code);
-            setPlayerId(null);
-          }
-        }
-        setPhase("join");
+        if (pid) setPlayerId(pid);
       } catch {
-        if (!cancelled) setPhase("missing");
+        if (!cancelled) setMissing(true);
+      } finally {
+        if (!cancelled) setBooting(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [code, loadNext]);
+  }, [code]);
 
-  async function join(e: React.FormEvent) {
-    e.preventDefault();
-    if (!name.trim()) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const r = await joinQuiz(code, name);
-      savePlayerName(name.trim());
-      savePlayerId(code, r.player_id);
-      setPlayerId(r.player_id);
-      setStreak(0);
-      await loadNext(r.player_id);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't join");
-    } finally {
-      setBusy(false);
-    }
-  }
+  // Poll the game state. The server decides what phase we're in; we just render it.
+  useEffect(() => {
+    if (!playerId) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const loop = async () => {
+      if (stopped) return;
+      if (!document.hidden) await refresh();
+      if (stopped) return;
+      const status = latest.current.state?.status ?? "lobby";
+      timer = setTimeout(loop, POLL_MS[status] + Math.random() * 250);
+    };
+    const onVisible = () => {
+      if (!document.hidden) void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    void loop();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [playerId, refresh]);
+
+  // New question => clear the local input.
+  const questionId = state?.question?.id;
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSelected([]);
+    setText("");
+    setLocked(false);
+    setAnswerError(null);
+  }, [questionId]);
 
   const answer = useCallback(
-    async (value: number[] | string | null): Promise<void> => {
-      const { current: cur, playerId: pid } = latest.current;
-      if (!cur || !pid || lock.current) return;
-      lock.current = true;
+    async (value: number[] | string) => {
+      const { state: st, playerId: pid, locked: already } = latest.current;
+      const q = st?.question;
+      if (!q || !pid || already) return;
+      setLocked(true);
       setBusy(true);
+      setAnswerError(null);
       try {
-        // A null answer means "my timer hit zero". If our clock ran slightly ahead of the
-        // server's it is refused, so retry briefly until the server agrees time is up.
-        for (let attempt = 0; ; attempt++) {
-          try {
-            const result = await submitAnswer(pid, cur.question.id, value);
-            buzz(result.is_correct ? 40 : result.is_correct === false ? [60, 40, 60] : 20);
-            if (result.is_correct) popConfetti();
-            setStreak((s) => (result.is_correct ? s + 1 : result.is_correct === false ? 0 : s));
-            setFeedback({ result, question: cur.question, score: cur.score + result.points });
-            setPhase("feedback");
-            return;
-          } catch (e) {
-            if (value === null && attempt < 6) {
-              await new Promise((r) => setTimeout(r, 600));
-              continue;
-            }
-            throw e;
-          }
-        }
+        await submitAnswer(pid, q.id, value);
+        buzz(30);
       } catch (e) {
         const msg = e instanceof Error ? e.message : "";
-        if (msg.includes("Already answered")) {
-          await loadNext(pid).catch(() => undefined);
-        } else {
-          lock.current = false;
-          setError(msg || "Couldn't send your answer. Try again.");
+        if (!msg.includes("Already answered")) {
+          setLocked(false);
+          setAnswerError(
+            msg.includes("closed") || msg.includes("Time is up")
+              ? "Time's up before that went through."
+              : msg || "Couldn't send your answer. Try again.",
+          );
         }
       } finally {
         setBusy(false);
+        void refresh();
       }
     },
-    [loadNext],
+    [refresh],
   );
 
-  // Countdown. The server owns the real clock; this is just the display + auto-submit.
+  // Local countdown (display only; the server enforces the real deadline) and
+  // an auto-submit of whatever is selected/typed when the timer hits zero.
+  const running = state?.status === "question" && !state.closed;
   useEffect(() => {
-    if (phase !== "question" || !current) return;
+    if (!running) return;
     const id = setInterval(() => {
       const left = Math.max(0, (deadline.current - performance.now()) / 1000);
       setSecondsLeft(left);
       if (left <= 0) {
         clearInterval(id);
-        const { selected: sel, text: txt, current: cur } = latest.current;
-        if (!cur) return;
-        const type = cur.question.type;
-        if (type === "short_text") void answer(txt.trim() ? txt.trim() : null);
-        else void answer(sel.length ? sel : null);
+        const { selected: sel, text: txt, locked: done, state: st } = latest.current;
+        if (done || !st?.question) return;
+        if (st.question.type === "short_text") {
+          if (txt.trim()) void answer(txt.trim());
+        } else if (sel.length) {
+          void answer(sel);
+        }
       }
     }, 100);
     return () => clearInterval(id);
-  }, [phase, current, answer]);
+  }, [running, questionId, answer]);
 
-  // Auto-advance after feedback.
+  // Celebrate (or not) when the host reveals the answer.
+  const revealKey = state?.status === "reveal" ? questionId : undefined;
   useEffect(() => {
-    if (phase !== "feedback" || !playerId) return;
-    const t = setTimeout(() => void loadNext(playerId).catch((e: Error) => setError(e.message)), 3200);
-    return () => clearTimeout(t);
-  }, [phase, playerId, loadNext, feedback]);
+    if (!revealKey) return;
+    const r = latest.current.state?.reveal;
+    if (r?.is_correct) {
+      popConfetti();
+      buzz(40);
+    } else if (r?.is_correct === false) {
+      buzz([60, 40, 60]);
+    }
+  }, [revealKey]);
 
-  const theme = asTheme(quiz?.theme);
+  // Confetti for the podium.
+  const finished = state?.status === "finished";
+  useEffect(() => {
+    if (!finished) return;
+    const s = latest.current.state;
+    if (s && (s.rank ?? 99) <= 3 && s.player_count > 1) bigConfetti();
+    else popConfetti();
+  }, [finished]);
 
-  if (phase === "loading") {
+  async function join(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setBusy(true);
+    setJoinError(null);
+    try {
+      const r = await joinQuiz(code, name);
+      savePlayerName(name.trim());
+      savePlayerId(code, r.player_id);
+      latest.current.playerId = r.player_id;
+      setState(null);
+      setPlayerId(r.player_id);
+    } catch (err) {
+      setJoinError(err instanceof Error ? err.message : "Couldn't join");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const theme = asTheme(state?.quiz.theme ?? quiz?.theme);
+
+  if (booting) {
     return (
       <Page theme={theme}>
         <Spinner />
@@ -215,7 +249,7 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
     );
   }
 
-  if (phase === "missing") {
+  if (missing || !quiz) {
     return (
       <Page>
         <div className="mx-auto max-w-md px-5 pt-16 text-center">
@@ -231,7 +265,9 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
     );
   }
 
-  if (phase === "join" && quiz) {
+  // ───────── Not joined yet ─────────
+  if (!playerId) {
+    const started = quiz.status !== "lobby";
     return (
       <Page theme={theme}>
         <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center px-5 py-10 text-center">
@@ -244,289 +280,507 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
             <p className="mt-3 inline-block rounded-full bg-white/15 px-3 py-1 text-sm font-extrabold">
               {quiz.question_count} question{quiz.question_count === 1 ? "" : "s"}
             </p>
-            <form onSubmit={join} className="card mt-8 grid gap-3 p-5 text-left">
-              <label htmlFor="name" className="font-display text-xl font-semibold">What should we call you?</label>
-              <input
-                id="name"
-                className="field font-display text-2xl"
-                placeholder="Your nickname"
-                maxLength={24}
-                autoComplete="nickname"
-                autoFocus
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-              {error && <ErrorBox>{error}</ErrorBox>}
-              <button className="btn btn-primary py-3.5 text-lg" disabled={busy || !name.trim()}>
-                {busy ? "Joining…" : "Let's go! 🚀"}
-              </button>
-            </form>
-          </motion.div>
-        </main>
-      </Page>
-    );
-  }
-
-  if (phase === "question" && current) {
-    const q = current.question;
-    const multi = q.type === "multiple_select";
-    const typed = q.type === "short_text";
-    const two = q.options.length <= 2;
-    return (
-      <Page theme={theme}>
-        <main className="mx-auto flex min-h-dvh max-w-2xl flex-col px-4 pb-6 pt-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="rounded-full bg-white/15 px-3 py-1.5 text-sm font-extrabold">
-              {q.pos} / {current.total}
-            </div>
-            {streak >= 2 && (
-              <motion.div initial={{ scale: 0.6 }} animate={{ scale: 1 }} className="rounded-full bg-[#ff7a1a] px-3 py-1.5 text-sm font-extrabold">
-                🔥 {streak} in a row
-              </motion.div>
-            )}
-            <div className="rounded-full bg-white/15 px-3 py-1.5 text-sm font-extrabold">
-              ⭐ <AnimatedNumber value={current.score} />
-            </div>
-          </div>
-
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={q.id}
-              initial={{ opacity: 0, x: 60 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -60 }}
-              className="flex flex-1 flex-col"
-            >
-              <div className="my-4 flex items-start gap-4">
-                <h1 className="font-display flex-1 text-3xl font-semibold leading-tight sm:text-4xl">
-                  {q.prompt}
-                </h1>
-                <TimerRing secondsLeft={secondsLeft} total={q.time_limit} />
+            {quiz.status === "finished" ? (
+              <div className="card mt-8 p-6">
+                <p className="text-5xl">🏁</p>
+                <p className="font-display mt-2 text-2xl font-semibold">This game has ended</p>
+                <Link href="/" className="btn btn-primary mt-4">Back home</Link>
               </div>
-
-              {q.image_url && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={q.image_url}
-                  alt=""
-                  referrerPolicy="no-referrer"
-                  className="mb-4 max-h-56 w-full rounded-2xl object-contain"
-                  onError={(e) => (e.currentTarget.style.display = "none")}
+            ) : (
+              <form onSubmit={join} className="card mt-8 grid gap-3 p-5 text-left">
+                <label htmlFor="name" className="font-display text-xl font-semibold">
+                  What should we call you?
+                </label>
+                <input
+                  id="name"
+                  className="field font-display text-2xl"
+                  placeholder="Your nickname"
+                  maxLength={24}
+                  autoComplete="nickname"
+                  autoFocus
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
                 />
-              )}
-
-              <p className="mb-3 text-sm font-bold text-white/70">
-                {multi
-                  ? "Select all that apply, then lock in"
-                  : typed
-                    ? "Type your answer"
-                    : q.type === "poll"
-                      ? "Poll, no points. Vote!"
-                      : "Pick one"}
-              </p>
-
-              {typed ? (
-                <form
-                  className="grid gap-3"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    if (text.trim()) void answer(text.trim());
-                  }}
-                >
-                  <input
-                    className="field font-display text-2xl"
-                    placeholder="Type here…"
-                    autoComplete="off"
-                    autoCapitalize="none"
-                    maxLength={200}
-                    autoFocus
-                    value={text}
-                    onChange={(e) => setText(e.target.value)}
-                  />
-                  <button className="btn btn-primary py-4 text-xl" disabled={busy || !text.trim()}>
-                    Lock it in 🔒
-                  </button>
-                </form>
-              ) : (
-                <>
-                  <div className={`grid flex-1 content-start gap-3 ${two ? "" : "sm:grid-cols-2"}`}>
-                    {q.options.map((opt, i) => {
-                      const st = OPTION_STYLES[i];
-                      const on = selected.includes(i);
-                      return (
-                        <motion.button
-                          key={i}
-                          type="button"
-                          disabled={busy}
-                          initial={{ opacity: 0, y: 18 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: 0.05 * i }}
-                          whileTap={{ scale: 0.96 }}
-                          aria-pressed={multi ? on : undefined}
-                          onClick={() => {
-                            if (multi) {
-                              setSelected((s) => (s.includes(i) ? s.filter((x) => x !== i) : [...s, i].sort()));
-                            } else {
-                              setSelected([i]);
-                              void answer([i]);
-                            }
-                          }}
-                          className="relative flex min-h-[4.5rem] items-center gap-3 rounded-2xl px-4 py-3 text-left text-lg font-extrabold leading-snug text-white transition disabled:opacity-60"
-                          style={{
-                            background: st.bg,
-                            boxShadow: `0 6px 0 ${st.shadow}`,
-                            outline: on ? "4px solid #fff" : "none",
-                            outlineOffset: 2,
-                          }}
-                        >
-                          <span className="font-display grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-black/25 text-lg">
-                            {multi ? (on ? "✓" : st.letter) : st.letter}
-                          </span>
-                          <span className="min-w-0 break-words">{opt}</span>
-                        </motion.button>
-                      );
-                    })}
-                  </div>
-                  {multi && (
-                    <button
-                      className="btn btn-primary mt-4 py-4 text-xl"
-                      disabled={busy || selected.length === 0}
-                      onClick={() => void answer(selected)}
-                    >
-                      Lock in {selected.length > 0 && `(${selected.length})`} 🔒
-                    </button>
-                  )}
-                </>
-              )}
-              {error && <div className="mt-3"><ErrorBox>{error}</ErrorBox></div>}
-            </motion.div>
-          </AnimatePresence>
-        </main>
-      </Page>
-    );
-  }
-
-  if (phase === "feedback" && feedback) {
-    const { result, question } = feedback;
-    const ok = result.is_correct;
-    const poll = ok === null;
-    const bg = poll ? "#118ab2" : ok ? "#06a77d" : "#ef476f";
-    return (
-      <Page theme={theme}>
-        <main
-          className={`mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center px-5 text-center ${ok === false ? "shake" : ""}`}
-        >
-          <motion.div
-            initial={{ scale: 0.3, rotate: -20, opacity: 0 }}
-            animate={{ scale: 1, rotate: 0, opacity: 1 }}
-            transition={{ type: "spring", stiffness: 260, damping: 14 }}
-            className="grid h-36 w-36 place-items-center rounded-full text-7xl shadow-2xl"
-            style={{ background: bg }}
-          >
-            {poll ? "📊" : ok ? "✅" : result.timed_out ? "⏰" : "❌"}
+                {started && (
+                  <p className="text-sm font-bold text-white/70">
+                    The game has already started. You&apos;ll jump in from the next question.
+                  </p>
+                )}
+                {joinError && <ErrorBox>{joinError}</ErrorBox>}
+                <button className="btn btn-primary py-3.5 text-lg" disabled={busy || !name.trim()}>
+                  {busy ? "Joining…" : "Join the game 🚀"}
+                </button>
+              </form>
+            )}
           </motion.div>
-          <h1 className="font-display mt-6 text-4xl font-bold">
-            {poll ? "Vote counted!" : ok ? "Correct!" : result.timed_out ? "Time's up!" : "Not quite"}
-          </h1>
-          {ok && (
-            <motion.p
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2 }}
-              className="font-display mt-2 text-3xl font-bold text-accent"
-            >
-              +{result.points.toLocaleString()}
-            </motion.p>
-          )}
-          {ok === false && result.correct && (
-            <p className="card mt-4 px-4 py-3 font-bold">
-              Answer: <span className="text-accent">{describeCorrect(question, result.correct)}</span>
-            </p>
-          )}
-          {streak >= 2 && ok && <p className="mt-3 font-extrabold">🔥 {streak} in a row!</p>}
-          <p className="mt-6 text-lg font-bold text-white/80">
-            Score: <AnimatedNumber value={feedback.score} className="text-white" />
-          </p>
-          <div className="mt-6 h-1.5 w-40 overflow-hidden rounded-full bg-white/20">
-            <motion.div
-              className="h-full bg-accent"
-              initial={{ width: "0%" }}
-              animate={{ width: "100%" }}
-              transition={{ duration: 3.2, ease: "linear" }}
-            />
-          </div>
-          <button
-            className="btn btn-ghost mt-4"
-            onClick={() => playerId && void loadNext(playerId).catch((e: Error) => setError(e.message))}
-          >
-            Next →
-          </button>
-          {error && <div className="mt-3"><ErrorBox>{error}</ErrorBox></div>}
         </main>
       </Page>
     );
   }
 
-  if (phase === "done" && results) {
+  if (!state) {
     return (
       <Page theme={theme}>
+        <Spinner label="Connecting" />
+      </Page>
+    );
+  }
+
+  const banner = offline ? (
+    <div className="fixed inset-x-0 top-0 z-20 bg-[#ef476f] px-3 py-1.5 text-center text-sm font-extrabold">
+      Reconnecting…
+    </div>
+  ) : null;
+
+  // ───────── Lobby ─────────
+  if (state.status === "lobby") {
+    return (
+      <Page theme={theme}>
+        {banner}
+        <Lobby state={state} />
+      </Page>
+    );
+  }
+
+  // ───────── Final results ─────────
+  if (state.status === "finished") {
+    return (
+      <Page theme={theme}>
+        {banner}
         <ResultsView
-          results={results}
+          state={state}
           onAgain={() => {
             clearPlayerId(code);
             setPlayerId(null);
-            setResults(null);
-            setStreak(0);
-            setPhase("join");
+            setState(null);
+            setQuiz((q) => (q ? { ...q, status: "finished" } : q));
           }}
         />
       </Page>
     );
   }
 
+  const q = state.question!;
+
+  // ───────── Reveal: right/wrong + leaderboard ─────────
+  if (state.status === "reveal") {
+    return (
+      <Page theme={theme}>
+        {banner}
+        <RevealView state={state} q={q} />
+      </Page>
+    );
+  }
+
+  // ───────── Question (running or closed, waiting for the reveal) ─────────
+  const answered = state.answered || locked;
+  const multi = q.type === "multiple_select";
+  const typed = q.type === "short_text";
+  const two = q.options.length <= 2;
+  const closed = !!state.closed;
+
   return (
     <Page theme={theme}>
-      <Spinner />
+      {banner}
+      <main className="mx-auto flex min-h-dvh max-w-2xl flex-col px-4 pb-6 pt-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="rounded-full bg-white/15 px-3 py-1.5 text-sm font-extrabold">
+            {q.pos} / {state.quiz.question_count}
+          </div>
+          {state.streak >= 2 && (
+            <div className="rounded-full bg-[#ff7a1a] px-3 py-1.5 text-sm font-extrabold">
+              🔥 {state.streak} in a row
+            </div>
+          )}
+          <div className="rounded-full bg-white/15 px-3 py-1.5 text-sm font-extrabold">
+            ⭐ <AnimatedNumber value={state.score} />
+          </div>
+        </div>
+
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={q.id}
+            initial={{ opacity: 0, x: 60 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -60 }}
+            className="flex flex-1 flex-col"
+          >
+            <div className="my-4 flex items-start gap-4">
+              <h1 className="font-display flex-1 text-3xl font-semibold leading-tight sm:text-4xl">
+                {q.prompt}
+              </h1>
+              <TimerRing secondsLeft={closed ? 0 : secondsLeft} total={q.time_limit} />
+            </div>
+
+            {q.image_url && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={q.image_url}
+                alt=""
+                referrerPolicy="no-referrer"
+                className="mb-4 max-h-56 w-full rounded-2xl object-contain"
+                onError={(e) => (e.currentTarget.style.display = "none")}
+              />
+            )}
+
+            {answered || closed ? (
+              <WaitCard
+                answered={answered}
+                closed={closed}
+                count={state.answered_count ?? 0}
+                players={state.player_count}
+              />
+            ) : (
+              <>
+                <p className="mb-3 text-sm font-bold text-white/70">
+                  {multi
+                    ? "Select all that apply, then lock in"
+                    : typed
+                      ? "Type your answer"
+                      : q.type === "poll"
+                        ? "Poll, no points. Vote!"
+                        : "Pick one"}
+                </p>
+
+                {typed ? (
+                  <form
+                    className="grid gap-3"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (text.trim()) void answer(text.trim());
+                    }}
+                  >
+                    <input
+                      className="field font-display text-2xl"
+                      placeholder="Type here…"
+                      autoComplete="off"
+                      autoCapitalize="none"
+                      maxLength={200}
+                      autoFocus
+                      value={text}
+                      onChange={(e) => setText(e.target.value)}
+                    />
+                    <button className="btn btn-primary py-4 text-xl" disabled={busy || !text.trim()}>
+                      Lock it in 🔒
+                    </button>
+                  </form>
+                ) : (
+                  <>
+                    <div className={`grid flex-1 content-start gap-3 ${two ? "" : "sm:grid-cols-2"}`}>
+                      {q.options.map((opt, i) => {
+                        const st = OPTION_STYLES[i];
+                        const on = selected.includes(i);
+                        return (
+                          <motion.button
+                            key={i}
+                            type="button"
+                            disabled={busy}
+                            initial={{ opacity: 0, y: 18 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.05 * i }}
+                            whileTap={{ scale: 0.96 }}
+                            aria-pressed={multi ? on : undefined}
+                            onClick={() => {
+                              if (multi) {
+                                setSelected((s) =>
+                                  s.includes(i) ? s.filter((x) => x !== i) : [...s, i].sort(),
+                                );
+                              } else {
+                                setSelected([i]);
+                                void answer([i]);
+                              }
+                            }}
+                            className="relative flex min-h-[4.5rem] items-center gap-3 rounded-2xl px-4 py-3 text-left text-lg font-extrabold leading-snug text-white transition disabled:opacity-60"
+                            style={{
+                              background: st.bg,
+                              boxShadow: `0 6px 0 ${st.shadow}`,
+                              outline: on ? "4px solid #fff" : "none",
+                              outlineOffset: 2,
+                            }}
+                          >
+                            <span className="font-display grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-black/25 text-lg">
+                              {multi ? (on ? "✓" : st.letter) : st.letter}
+                            </span>
+                            <span className="min-w-0 break-words">{opt}</span>
+                          </motion.button>
+                        );
+                      })}
+                    </div>
+                    {multi && (
+                      <button
+                        className="btn btn-primary mt-4 py-4 text-xl"
+                        disabled={busy || selected.length === 0}
+                        onClick={() => void answer(selected)}
+                      >
+                        Lock in {selected.length > 0 && `(${selected.length})`} 🔒
+                      </button>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+            {answerError && (
+              <div className="mt-3">
+                <ErrorBox>{answerError}</ErrorBox>
+              </div>
+            )}
+          </motion.div>
+        </AnimatePresence>
+      </main>
     </Page>
   );
 }
 
-function ResultsView({ results, onAgain }: { results: Results; onAgain: () => void }) {
+function WaitCard({
+  answered,
+  closed,
+  count,
+  players,
+}: {
+  answered: boolean;
+  closed: boolean;
+  count: number;
+  players: number;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className="card mt-4 flex flex-col items-center gap-3 px-6 py-10 text-center"
+    >
+      <motion.span
+        className="text-6xl"
+        animate={closed ? { rotate: [0, -8, 8, 0] } : { scale: [1, 1.12, 1] }}
+        transition={{ repeat: Infinity, duration: 1.8 }}
+      >
+        {closed ? "⏰" : "🔒"}
+      </motion.span>
+      <h2 className="font-display text-3xl font-bold">
+        {closed ? "Time's up!" : "Locked in!"}
+      </h2>
+      <p className="font-semibold text-white/80">
+        {closed
+          ? answered
+            ? "Your answer is in. Eyes on the big screen, the host will reveal the answer."
+            : "No answer from you this round. The host will reveal the answer."
+          : "Waiting for the timer to run out…"}
+      </p>
+      {!closed && (
+        <p className="rounded-full bg-white/15 px-3 py-1 text-sm font-extrabold">
+          {count} of {players} answered
+        </p>
+      )}
+    </motion.div>
+  );
+}
+
+function Lobby({ state }: { state: PlayState }) {
+  const players = state.players ?? [];
+  return (
+    <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center px-5 pb-10 pt-8 text-center">
+      <Logo small />
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="mt-10"
+      >
+        <motion.p
+          className="text-7xl"
+          animate={{ rotate: [0, -10, 10, -6, 0], y: [0, -8, 0] }}
+          transition={{ repeat: Infinity, duration: 3 }}
+        >
+          🎉
+        </motion.p>
+        <h1 className="font-display mt-3 text-4xl font-bold">You&apos;re in, {state.name}!</h1>
+        <p className="mt-2 text-lg font-semibold text-white/80">{state.quiz.title}</p>
+      </motion.div>
+
+      <div className="card mt-8 w-full p-5">
+        <div className="flex items-center justify-center gap-2 font-display text-xl font-semibold">
+          Waiting for the host to start
+          <span className="flex gap-1" aria-hidden>
+            {[0, 1, 2].map((i) => (
+              <motion.span
+                key={i}
+                className="h-2 w-2 rounded-full bg-accent"
+                animate={{ opacity: [0.2, 1, 0.2], y: [0, -4, 0] }}
+                transition={{ repeat: Infinity, duration: 1.2, delay: i * 0.2 }}
+              />
+            ))}
+          </span>
+        </div>
+        <p className="mt-1 text-sm font-bold text-white/65">
+          {state.quiz.question_count} question{state.quiz.question_count === 1 ? "" : "s"} · get ready!
+        </p>
+      </div>
+
+      <section className="mt-6 w-full" aria-label="Players in the lobby">
+        <p className="mb-3 text-sm font-extrabold uppercase tracking-wider text-white/60">
+          {state.player_count} player{state.player_count === 1 ? "" : "s"} here
+        </p>
+        <ul className="flex flex-wrap justify-center gap-2">
+          <AnimatePresence>
+            {players.map((n) => (
+              <motion.li
+                key={n}
+                layout
+                initial={{ opacity: 0, scale: 0.4 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.4 }}
+                transition={{ type: "spring", stiffness: 420, damping: 22 }}
+                className={`rounded-full px-3.5 py-1.5 text-sm font-extrabold ${
+                  n === state.name ? "bg-accent text-accent-ink" : "bg-white/15"
+                }`}
+              >
+                {n}
+              </motion.li>
+            ))}
+          </AnimatePresence>
+        </ul>
+      </section>
+    </main>
+  );
+}
+
+function LeaderboardList({
+  rows,
+  me,
+}: {
+  rows: LeaderboardRow[];
+  me: { name: string; score: number; rank: number | null };
+}) {
+  const inList = rows.some((r) => r.is_me);
+  return (
+    <ol className="grid gap-1.5">
+      {rows.map((r, i) => (
+        <motion.li
+          key={`${r.name}-${i}`}
+          layout
+          initial={{ opacity: 0, x: -16 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.06 * i }}
+          className={`flex items-center gap-3 rounded-xl px-3 py-2 ${
+            r.is_me ? "bg-accent font-extrabold text-accent-ink" : "bg-white/10 font-bold"
+          }`}
+        >
+          <span className="w-8 text-center">{medal(r.rank)}</span>
+          <span className="min-w-0 flex-1 truncate">
+            {r.name}
+            {r.is_me && " (you)"}
+          </span>
+          <span>{r.score.toLocaleString()}</span>
+        </motion.li>
+      ))}
+      {!inList && me.rank && (
+        <>
+          <li className="text-center text-white/50" aria-hidden>⋯</li>
+          <li className="flex items-center gap-3 rounded-xl bg-accent px-3 py-2 font-extrabold text-accent-ink">
+            <span className="w-8 text-center">#{me.rank}</span>
+            <span className="min-w-0 flex-1 truncate">{me.name} (you)</span>
+            <span>{me.score.toLocaleString()}</span>
+          </li>
+        </>
+      )}
+    </ol>
+  );
+}
+
+function RevealView({ state, q }: { state: PlayState; q: PlayQuestion }) {
+  const r = state.reveal!;
+  const ok = r.is_correct;
+  const poll = ok === null;
+  const bg = poll ? "#118ab2" : ok ? "#06a77d" : "#ef476f";
+  const title = poll
+    ? r.answered
+      ? "Vote counted!"
+      : "Poll closed"
+    : ok
+      ? "Correct!"
+      : r.answered
+        ? "Not quite"
+        : "No answer";
+  return (
+    <main
+      className={`mx-auto flex min-h-dvh max-w-md flex-col items-center px-5 pb-10 pt-10 text-center ${ok === false ? "shake" : ""}`}
+    >
+      <motion.div
+        initial={{ scale: 0.3, rotate: -20, opacity: 0 }}
+        animate={{ scale: 1, rotate: 0, opacity: 1 }}
+        transition={{ type: "spring", stiffness: 260, damping: 14 }}
+        className="grid h-32 w-32 place-items-center rounded-full text-6xl shadow-2xl"
+        style={{ background: bg }}
+      >
+        {poll ? "📊" : ok ? "✅" : r.answered ? "❌" : "⏰"}
+      </motion.div>
+      <h1 className="font-display mt-5 text-4xl font-bold">{title}</h1>
+      {ok && (
+        <motion.p
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="font-display mt-1 text-3xl font-bold text-accent"
+        >
+          +{r.points.toLocaleString()}
+        </motion.p>
+      )}
+      {r.correct && !ok && (
+        <p className="card mt-4 px-4 py-3 font-bold">
+          Answer: <span className="text-accent">{describeCorrect(q, r.correct)}</span>
+        </p>
+      )}
+      {ok && state.streak >= 2 && <p className="mt-2 font-extrabold">🔥 {state.streak} in a row!</p>}
+
+      <section className="card mt-6 w-full p-4 text-left">
+        <div className="mb-2 flex items-baseline justify-between">
+          <h2 className="font-display text-xl font-semibold">Leaderboard</h2>
+          {state.rank && (
+            <p className="text-sm font-bold text-white/70">
+              You&apos;re #{state.rank} · <AnimatedNumber value={state.score} />
+            </p>
+          )}
+        </div>
+        <LeaderboardList
+          rows={state.leaderboard}
+          me={{ name: state.name, score: state.score, rank: state.rank }}
+        />
+      </section>
+
+      <p className="mt-6 flex items-center gap-2 text-sm font-bold text-white/70">
+        <motion.span
+          className="h-2 w-2 rounded-full bg-accent"
+          animate={{ opacity: [0.2, 1, 0.2] }}
+          transition={{ repeat: Infinity, duration: 1.4 }}
+        />
+        Waiting for the host to continue…
+      </p>
+    </main>
+  );
+}
+
+function ResultsView({ state, onAgain }: { state: PlayState; onAgain: () => void }) {
   const [open, setOpen] = useState(false);
+  const rank = state.rank ?? state.player_count;
   return (
     <main className="mx-auto max-w-lg px-4 pb-14 pt-8 text-center">
       <Logo small />
       <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} className="mt-6">
-        <p className="text-7xl">{results.rank <= 3 ? medal(results.rank) : "🎊"}</p>
-        <h1 className="font-display mt-2 text-4xl font-bold">
-          {results.rank === 1 ? "You won!" : "Quiz complete!"}
-        </h1>
-        <p className="mt-1 font-semibold text-white/75">{results.quiz.title}</p>
+        <p className="text-7xl">{rank <= 3 ? medal(rank) : "🎊"}</p>
+        <h1 className="font-display mt-2 text-4xl font-bold">{rank === 1 ? "You won!" : "Quiz complete!"}</h1>
+        <p className="mt-1 font-semibold text-white/75">{state.quiz.title}</p>
       </motion.div>
 
       <div className="mt-6 grid grid-cols-3 gap-3">
-        <Stat label="Score" value={<AnimatedNumber value={results.score} />} />
-        <Stat label="Rank" value={`${results.rank}/${results.player_count}`} />
-        <Stat label="Correct" value={results.correct} />
+        <Stat label="Score" value={<AnimatedNumber value={state.score} />} />
+        <Stat label="Rank" value={`${rank}/${state.player_count}`} />
+        <Stat label="Correct" value={state.correct} />
       </div>
 
       <section className="card mt-6 p-4 text-left">
         <h2 className="font-display mb-2 text-xl font-semibold">Leaderboard</h2>
-        <ol className="grid gap-1.5">
-          {results.leaderboard.map((r, i) => (
-            <motion.li
-              key={`${r.name}-${i}`}
-              initial={{ opacity: 0, x: -16 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.05 * i }}
-              className={`flex items-center gap-3 rounded-xl px-3 py-2 ${r.is_me ? "bg-accent font-extrabold text-accent-ink" : "bg-white/10 font-bold"}`}
-            >
-              <span className="w-8 text-center">{medal(r.rank)}</span>
-              <span className="min-w-0 flex-1 truncate">{r.name}{r.is_me && " (you)"}</span>
-              <span>{r.score.toLocaleString()}</span>
-            </motion.li>
-          ))}
-        </ol>
+        <LeaderboardList
+          rows={state.leaderboard}
+          me={{ name: state.name, score: state.score, rank: state.rank }}
+        />
       </section>
 
       <section className="card mt-4 p-4 text-left">
@@ -539,7 +793,7 @@ function ResultsView({ results, onAgain }: { results: Results; onAgain: () => vo
         </button>
         {open && (
           <ul className="mt-3 grid gap-2">
-            {results.review.map((r) => (
+            {(state.review ?? []).map((r) => (
               <ReviewItem key={r.pos} r={r} />
             ))}
           </ul>
@@ -547,7 +801,7 @@ function ResultsView({ results, onAgain }: { results: Results; onAgain: () => vo
       </section>
 
       <div className="mt-6 flex flex-wrap justify-center gap-3">
-        <button className="btn btn-primary" onClick={onAgain}>Play as someone else</button>
+        <button className="btn btn-primary" onClick={onAgain}>Done</button>
         <Link href="/create" className="btn btn-ghost">Make your own quiz ✨</Link>
       </div>
     </main>

@@ -18,7 +18,7 @@ const FLOATERS = [
 const STEPS = [
   { n: "1", t: "Build it", d: "Add questions, pick answer types, set timers and points." },
   { n: "2", t: "Share the QR", d: "Players scan and join from their phones. No app, no sign-up." },
-  { n: "3", t: "Watch live", d: "A private host QR opens your dashboard with answers rolling in." },
+  { n: "3", t: "Run the show", d: "Start when everyone's in, reveal each answer, and watch the leaderboard." },
 ];
 
 export default function Home() {
@@ -77,8 +77,8 @@ export default function Home() {
           transition={{ delay: 0.15 }}
           className="mt-5 max-w-xl text-lg font-semibold text-white/80"
         >
-          Build a timed quiz in minutes. Everyone joins from their phone with a QR code, and you
-          get a private QR to watch every answer land, live.
+          Build a timed quiz in minutes. Everyone joins from their phone with a QR code and waits in
+          the lobby. Then you run the show: start it, reveal each answer, crown the winner.
         </motion.p>
 
         <motion.div
@@ -141,7 +141,7 @@ export default function Home() {
                       href={`/host/${q.id}#t=${q.hostToken}`}
                       className="btn btn-primary px-3 py-2 text-sm"
                     >
-                      Live results
+                      Host screen
                     </Link>
                     <Confirm
                       label="Sure?"
