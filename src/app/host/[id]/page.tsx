@@ -13,12 +13,14 @@ import {
   Spinner,
   TimerRing,
 } from "@/components/ui";
+import { BubbleCloud } from "@/components/BubbleCloud";
 import { hostAction, hostDashboard } from "@/lib/api";
 import { bigConfetti } from "@/lib/fx";
 import { getMyQuizzes, saveMyQuiz } from "@/lib/storage";
 import { OPTION_STYLES, asTheme } from "@/lib/theme";
 import {
   QUESTION_TYPES,
+  isUnscored,
   type HostAction,
   type HostDashboard,
   type HostPlayer,
@@ -210,9 +212,9 @@ export default function HostPage({ params }: PageProps<"/host/[id]">) {
   const cur = data.state.current_pos;
   const q = cur > 0 ? data.questions[cur - 1] : undefined;
   // Polls have no scores or right answers, so they get no leaderboard or per-question breakdown.
-  const pollOnly = data.questions.length > 0 && data.questions.every((x) => x.type === "poll");
+  const pollOnly = data.questions.length > 0 && data.questions.every((x) => isUnscored(x.type));
   const showOverview =
-    (data.state.status === "reveal" && q?.type !== "poll") ||
+    (data.state.status === "reveal" && !(q && isUnscored(q.type))) ||
     (data.state.status === "finished" && !pollOnly);
 
   function exportCsv() {
@@ -487,7 +489,7 @@ function QuestionHeader({ q, total }: { q: HostQuestion; total: number }) {
   return (
     <p className="text-xs font-extrabold uppercase tracking-wider text-white/60">
       Question {q.pos} of {total} · {meta.emoji} {meta.label}
-      {q.type !== "poll" && ` · up to ${q.points} pts`}
+      {!isUnscored(q.type) && ` · up to ${q.points} pts`}
     </p>
   );
 }
@@ -538,7 +540,9 @@ function QuestionStage({
               ? "Timer ended. Tap Reveal when ready."
               : q.type === "poll"
                 ? "Votes update live"
-                : "Answers stay hidden until you reveal"}
+                : q.type === "multi_answer"
+                  ? "Answers appear live"
+                  : "Answers stay hidden until you reveal"}
           </span>
         </div>
         <div className="h-2.5 overflow-hidden rounded-full bg-white/15">
@@ -566,6 +570,10 @@ function QuestionStage({
         </div>
       ) : q.type === "poll" ? (
         <PollChart q={q} />
+      ) : q.type === "multi_answer" ? (
+        <div className="mt-5">
+          <BubbleCloud data={q.bubbles} className="h-[26rem] sm:h-[30rem]" emptyText="Waiting for the first answers…" />
+        </div>
       ) : (
         <ul className="mt-5 grid gap-3 sm:grid-cols-2">
           {q.options.map((opt, i) => {
@@ -688,7 +696,7 @@ function RevealStage({ data, q }: { data: HostDashboard; q: HostQuestion }) {
         <span className="rounded-full bg-white/15 px-3 py-1">
           {q.answered}/{data.players.length} answered
         </span>
-        {pctRight !== null && q.type !== "poll" && (
+        {pctRight !== null && !isUnscored(q.type) && (
           <span className={`rounded-full px-3 py-1 ${pctRight >= 60 ? "bg-[#06a77d]" : "bg-[#ef476f]"}`}>
             {pctRight}% got it right
           </span>
@@ -719,6 +727,10 @@ function RevealStage({ data, q }: { data: HostDashboard; q: HostQuestion }) {
         </div>
       ) : q.type === "poll" ? (
         <PollChart q={q} />
+      ) : q.type === "multi_answer" ? (
+        <div className="mt-5">
+          <BubbleCloud data={q.bubbles} className="h-[26rem] sm:h-[30rem]" />
+        </div>
       ) : (
         <ul className="mt-5 grid gap-2.5">
           {q.options.map((opt, i) => {
@@ -767,8 +779,8 @@ function FinishedStage({ data, pollOnly }: { data: HostDashboard; pollOnly: bool
         <p className="text-5xl">📊</p>
         <h2 className="font-display mt-2 text-4xl font-bold sm:text-5xl">Poll complete</h2>
         <p className="mt-4 font-semibold text-white/70">
-          {data.players.length} participant{data.players.length === 1 ? "" : "s"} voted. Press Play again to
-          reuse this poll with a fresh lobby.
+          {data.players.length} participant{data.players.length === 1 ? "" : "s"} took part. Press Play again to
+          reuse this with a fresh lobby.
         </p>
       </section>
     );
@@ -889,7 +901,7 @@ function QuestionCard({ q, players }: { q: HostQuestion; players: number }) {
           <p>
             {q.answered}/{players} answered
           </p>
-          {pctRight !== null && q.type !== "poll" && (
+          {pctRight !== null && !isUnscored(q.type) && (
             <p className={pctRight >= 60 ? "text-[#4be3a6]" : "text-[#ffb3be]"}>{pctRight}% right</p>
           )}
           {q.avg_time_ms !== null && <p>avg {(q.avg_time_ms / 1000).toFixed(1)}s</p>}
@@ -911,6 +923,25 @@ function QuestionCard({ q, players }: { q: HostQuestion; players: number }) {
                   {t.text} {t.count > 1 && <span className="opacity-70">×{t.count}</span>}
                 </li>
               ))}
+            </ul>
+          ) : (
+            <p className="text-sm font-semibold text-white/50">No answers yet</p>
+          )}
+        </div>
+      ) : q.type === "multi_answer" ? (
+        <div className="mt-3">
+          {q.bubbles && q.bubbles.items.length > 0 ? (
+            <ul className="flex flex-wrap gap-2">
+              {q.bubbles.items.map((b) => (
+                <li key={b.key} className="rounded-full bg-white/15 px-3 py-1 text-sm font-extrabold">
+                  {b.text} {b.count > 1 && <span className="opacity-70">×{b.count}</span>}
+                </li>
+              ))}
+              {q.bubbles.more > 0 && (
+                <li className="rounded-full border-2 border-dashed border-white/35 px-3 py-1 text-sm font-extrabold text-white/70">
+                  +{q.bubbles.more} more
+                </li>
+              )}
             </ul>
           ) : (
             <p className="text-sm font-semibold text-white/50">No answers yet</p>

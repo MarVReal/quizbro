@@ -137,6 +137,8 @@ export interface PlayState {
   reveal?: RevealInfo;
   /** multi_answer: shown once you have submitted (and on reveal). */
   bubbles?: BubbleData;
+  /** multi_answer: what you submitted (so your bubbles stay highlighted after a refresh). */
+  my_answers?: string[] | null;
   /** finished */
   review?: ReviewRow[];
 }

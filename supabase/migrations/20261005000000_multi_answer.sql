@@ -335,7 +335,9 @@ begin
     -- Word-cloud style answers have no right answer, so they are safe to show once
     -- you have submitted yours (or after the reveal).
     if v_q.type = 'multi_answer' and (v_my.id is not null or v_quiz.status = 'reveal') then
-      v_out := v_out || jsonb_build_object('bubbles', public.quizbro_bubbles(v_q.id));
+      v_out := v_out || jsonb_build_object(
+        'bubbles', public.quizbro_bubbles(v_q.id),
+        'my_answers', v_my.answer);
     end if;
 
     if v_quiz.status = 'reveal' then

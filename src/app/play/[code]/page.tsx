@@ -11,6 +11,7 @@ import {
   Spinner,
   TimerRing,
 } from "@/components/ui";
+import { BubbleCloud } from "@/components/BubbleCloud";
 import { MultiAnswerForm } from "@/components/MultiAnswerForm";
 import { getPlayState, getQuizPublic, joinQuiz, submitAnswer } from "@/lib/api";
 import { MAX_ANSWERS, MAX_CHARS, salvageAnswers } from "@/lib/multi-answer";
@@ -435,12 +436,24 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
             )}
 
             {answered || closed ? (
-              <WaitCard
-                answered={answered}
-                closed={closed}
-                count={state.answered_count ?? 0}
-                players={state.player_count}
-              />
+              <>
+                <WaitCard
+                  answered={answered}
+                  closed={closed}
+                  count={state.answered_count ?? 0}
+                  players={state.player_count}
+                  compact={multiAnswer}
+                />
+                {multiAnswer && state.bubbles && (
+                  <div className="mt-4">
+                    <BubbleCloud
+                      data={state.bubbles}
+                      mine={state.my_answers ?? (answered ? boxes : null)}
+                      className="h-[22rem]"
+                    />
+                  </div>
+                )}
+              </>
             ) : (
               <>
                 <p className="mb-3 text-sm font-bold text-white/70">
@@ -558,26 +571,29 @@ function WaitCard({
   closed,
   count,
   players,
+  compact = false,
 }: {
   answered: boolean;
   closed: boolean;
   count: number;
   players: number;
+  /** Smaller card, for when something else (like the bubbles) shares the screen. */
+  compact?: boolean;
 }) {
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="card mt-4 flex flex-col items-center gap-3 px-6 py-10 text-center"
+      className={`card mt-4 flex flex-col items-center text-center ${compact ? "gap-1.5 px-5 py-4" : "gap-3 px-6 py-10"}`}
     >
       <motion.span
-        className="text-6xl"
+        className={compact ? "text-4xl" : "text-6xl"}
         animate={closed ? { rotate: [0, -8, 8, 0] } : { scale: [1, 1.12, 1] }}
         transition={{ repeat: Infinity, duration: 1.8 }}
       >
         {closed ? "⏰" : "🔒"}
       </motion.span>
-      <h2 className="font-display text-3xl font-bold">
+      <h2 className={`font-display font-bold ${compact ? "text-2xl" : "text-3xl"}`}>
         {closed ? "Time's up!" : "Locked in!"}
       </h2>
       <p className="font-semibold text-white/80">
@@ -723,7 +739,11 @@ function RevealView({ state, q }: { state: PlayState; q: PlayQuestion }) {
   const ok = r.is_correct;
   const poll = ok === null;
   const bg = poll ? "#118ab2" : ok ? "#06a77d" : "#ef476f";
-  const title = poll
+  const title = q.type === "multi_answer"
+    ? r.answered
+      ? "Answers counted!"
+      : "Time's up"
+    : poll
     ? r.answered
       ? "Vote counted!"
       : "Poll closed"
@@ -743,7 +763,7 @@ function RevealView({ state, q }: { state: PlayState; q: PlayQuestion }) {
         className="grid h-32 w-32 place-items-center rounded-full text-6xl shadow-2xl"
         style={{ background: bg }}
       >
-        {poll ? "📊" : ok ? "✅" : r.answered ? "❌" : "⏰"}
+        {q.type === "multi_answer" ? "🫧" : poll ? "📊" : ok ? "✅" : r.answered ? "❌" : "⏰"}
       </motion.div>
       <h1 className="font-display mt-5 text-4xl font-bold">{title}</h1>
       {ok && (
@@ -762,6 +782,12 @@ function RevealView({ state, q }: { state: PlayState; q: PlayQuestion }) {
         </p>
       )}
       {ok && state.streak >= 2 && <p className="mt-2 font-extrabold">🔥 {state.streak} in a row!</p>}
+
+      {q.type === "multi_answer" && state.bubbles && (
+        <div className="mt-6 w-full">
+          <BubbleCloud data={state.bubbles} mine={state.my_answers} className="h-[22rem]" />
+        </div>
+      )}
 
       {!poll && (
         <section className="card mt-6 w-full p-4 text-left">
@@ -865,6 +891,7 @@ function ReviewItem({ r }: { r: ReviewRow }) {
   const show = (v: ReviewRow["answer"] | ReviewRow["correct"]) => {
     if (v === null || v === undefined) return "—";
     if (typeof v === "string") return v;
+    if (r.type === "multi_answer") return (v as string[]).join(", ") || "—";
     if (r.type === "short_text") return (v as unknown as string[]).join(" / ");
     return (v as number[]).map((i) => r.options[i]).join(" + ") || "—";
   };

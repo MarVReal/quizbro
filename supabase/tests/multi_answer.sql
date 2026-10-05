@@ -93,6 +93,7 @@ begin
   assert (st->'bubbles'->'items'->0->>'count') = '3' and lower(st->'bubbles'->'items'->0->>'text') = 'pizza', 'pizza merged x3';
   assert (select count from jsonb_to_recordset(st->'bubbles'->'items') as t(key text, text text, count int) where key='a b') = 2, 'nbsp collapsed & merged with "a b"';
   assert (st->'bubbles'->>'more') = '0';
+  assert (st->'my_answers') = jsonb_build_array('pizza', 'a b', U&'\+01F355'), 'my_answers returned';
   assert (st->'reveal') is null, 'no reveal while question runs';
 
   -- host sees them too; counts null; old types still report counts
