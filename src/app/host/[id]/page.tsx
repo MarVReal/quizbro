@@ -13,7 +13,7 @@ import {
   Spinner,
   TimerRing,
 } from "@/components/ui";
-import { LiveAnswers } from "@/components/LiveAnswers";
+import { BubbleCloud } from "@/components/BubbleCloud";
 import { hostAction, hostDashboard } from "@/lib/api";
 import { bigConfetti } from "@/lib/fx";
 import { getMyQuizzes, saveMyQuiz } from "@/lib/storage";
@@ -572,11 +572,9 @@ function QuestionStage({
         <PollChart q={q} />
       ) : q.type === "multi_answer" ? (
         <div className="mt-5">
-          <LiveAnswers
-            variant="host"
-            bubbles={q.bubbles}
-            feed={q.feed}
-            className="h-[28rem] sm:h-[34rem]"
+          <BubbleCloud
+            data={q.bubbles}
+            className="relative h-[28rem] sm:h-[34rem]"
             emptyText="Waiting for the first answers…"
           />
         </div>
@@ -735,7 +733,7 @@ function RevealStage({ data, q }: { data: HostDashboard; q: HostQuestion }) {
         <PollChart q={q} />
       ) : q.type === "multi_answer" ? (
         <div className="mt-5">
-          <LiveAnswers variant="host" bubbles={q.bubbles} feed={q.feed} className="h-[28rem] sm:h-[34rem]" />
+          <BubbleCloud data={q.bubbles} className="relative h-[28rem] sm:h-[34rem]" />
         </div>
       ) : (
         <ul className="mt-5 grid gap-2.5">

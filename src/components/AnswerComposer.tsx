@@ -11,7 +11,7 @@ gsap.registerPlugin(useGSAP);
 const RING_R = 21;
 const RING_C = 2 * Math.PI * RING_R;
 
-/** A short wait between sends. `ends` is a performance.now() timestamp; `key` changes whenever one starts. */
+/** A short wait between answers. `ends` is a performance.now() timestamp; `key` changes whenever one starts. */
 export interface Cooldown {
   key: number;
   ends: number;
@@ -25,7 +25,7 @@ interface Props {
   draft: string;
   onDraft: (v: string) => void;
   cooldown: Cooldown;
-  /** True while a message is on its way to the server. */
+  /** True while an answer is on its way to the server. */
   busy: boolean;
   /** Error from the server for the last send. */
   error: string | null;
@@ -35,11 +35,11 @@ interface Props {
 }
 
 /**
- * A chat box. Type, press send (or Enter): the text disappears into the live chat and the box is
- * ready for the next one, until the allowance is used up. A tiny ring around the send button
- * shows the short wait between messages; you can keep typing during it.
+ * Type an answer and press send (or Enter): the text clears and the box is ready for the next
+ * one, until the allowance is used up. Answers are anonymous. A tiny ring around the send button
+ * shows the short wait between answers; you can keep typing during it.
  */
-export function ChatComposer({
+export function AnswerComposer({
   sent,
   maxAnswers,
   maxChars,
@@ -103,7 +103,7 @@ export function ChatComposer({
     { scope: root, dependencies: [cooldown.key, reduced] },
   );
 
-  // Sending: the box gives a little squash, like a message leaving.
+  // Sending: the box gives a little squash, like an answer leaving.
   const prevUsed = useRef(used);
   useGSAP(
     () => {
@@ -150,7 +150,7 @@ export function ChatComposer({
     <div ref={root} className={className}>
       {allUsed ? (
         <div className="cc-done rounded-full bg-black/45 px-4 py-3 text-center text-sm font-extrabold backdrop-blur">
-          🎉 You&apos;ve sent all your answers. Enjoy the show!
+          🎉 You&apos;ve sent all your answers. Watch the bubbles grow!
         </div>
       ) : (
         <form
@@ -186,7 +186,7 @@ export function ChatComposer({
                 {len}/{maxChars}
               </span>
             )}
-            {/* The send button never steals focus, so the keyboard stays open for the next message. */}
+            {/* The send button never steals focus, so the keyboard stays open for the next answer. */}
             <button
               type="submit"
               aria-label={busy ? "Sending" : cooling ? `Wait ${secs} seconds` : "Send answer"}

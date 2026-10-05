@@ -5,7 +5,7 @@ import {
   cleanAnswer,
   charCount,
   clampInt,
-  mergeFeed,
+  mergeBubbles,
   normalizeAnswer,
   validateNextAnswer,
 } from "./multi-answer.ts";
@@ -116,42 +116,45 @@ describe("clampInt", () => {
   });
 });
 
-describe("mergeFeed", () => {
-  const msg = (id: number, name: string, text: string, is_me = false) => ({ id, name, text, is_me });
+describe("mergeBubbles (what I see right after sending)", () => {
+  const bubble = (text: string, count: number) => ({ key: text.toLowerCase(), text, count });
 
-  test("with nothing pending it is just the server's messages", () => {
-    const server = [msg(1, "Ana", "Pizza"), msg(2, "Ben", "Tacos")];
-    assert.deepEqual(mergeFeed(server, []), server);
+  test("before I have sent anything and the server has nothing, there is nothing to show", () => {
+    assert.equal(mergeBubbles(undefined, []), undefined);
+    assert.equal(mergeBubbles(null, []), undefined);
   });
 
-  test("a message I just sent shows up straight away, after everyone else's", () => {
-    const merged = mergeFeed([msg(5, "Ana", "Pizza")], [msg(-1, "Me", "Sushi", true)]);
-    assert.deepEqual(merged.map((m) => m.text), ["Pizza", "Sushi"]);
-    assert.equal(merged[1].id, -1);
+  test("my own answer appears straight away, even before the server has counted it", () => {
+    const merged = mergeBubbles(undefined, ["  DATA "]);
+    assert.deepEqual(merged, { items: [{ key: "data", text: "DATA", count: 1 }], more: 0 });
   });
 
-  test("once the server echoes it back, it keeps its original id and appears once (no second pop-in)", () => {
-    const merged = mergeFeed([msg(5, "Ana", "Pizza"), msg(6, "Me", "  SUSHI ", true)], [msg(-1, "Me", "Sushi", true)]);
-    assert.equal(merged.length, 2);
-    assert.equal(merged[1].id, -1, "client id kept");
-    assert.equal(merged[1].text, "  SUSHI ", "but the server's text and name win");
+  test("answers the server already has are left exactly as the server counted them", () => {
+    const server = { items: [bubble("DATA", 7), bubble("Cloud", 2)], more: 3 };
+    const merged = mergeBubbles(server, ["data", "CLOUD"]);
+    assert.deepEqual(merged, server);
   });
 
-  test("only my own messages can confirm a pending one", () => {
-    const merged = mergeFeed([msg(6, "Ben", "Sushi", false)], [msg(-1, "Me", "Sushi", true)]);
-    assert.equal(merged.length, 2);
+  test("only the missing ones are added, at the bottom with a count of 1", () => {
+    const server = { items: [bubble("DATA", 7)], more: 0 };
+    const merged = mergeBubbles(server, ["Data", "Sushi"]);
+    assert.deepEqual(merged?.items.map((i) => [i.key, i.count]), [["data", 7], ["sushi", 1]]);
   });
 
-  test("two pending messages are confirmed one by one", () => {
-    const merged = mergeFeed(
-      [msg(7, "Me", "a", true)],
-      [msg(-1, "Me", "a", true), msg(-2, "Me", "b", true)],
-    );
-    assert.deepEqual(merged.map((m) => [m.id, m.text]), [[-1, "a"], [-2, "b"]]);
+  test("keeps the server's overflow count and never changes its input", () => {
+    const server = { items: [bubble("a", 1)], more: 4 };
+    const before = JSON.stringify(server);
+    assert.equal(mergeBubbles(server, ["b"])?.more, 4);
+    assert.equal(JSON.stringify(server), before);
   });
 
-  test("earlier messages of mine (e.g. after a refresh) are left alone", () => {
-    const server = [msg(3, "Me", "old", true), msg(4, "Ana", "x")];
-    assert.deepEqual(mergeFeed(server, []), server);
+  test("two of my answers that mean the same thing are added once", () => {
+    const merged = mergeBubbles(undefined, ["Pizza", " pizza "]);
+    assert.equal(merged?.items.length, 1);
+  });
+
+  test("carries only text and counts: no names anywhere", () => {
+    const merged = mergeBubbles({ items: [bubble("DATA", 2)], more: 0 }, ["x"]);
+    for (const item of merged!.items) assert.deepEqual(Object.keys(item).sort(), ["count", "key", "text"]);
   });
 });

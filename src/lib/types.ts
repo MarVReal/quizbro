@@ -1,7 +1,3 @@
-import type { FeedItem } from "./multi-answer";
-
-export type { FeedItem };
-
 export type QuestionType =
   | "multiple_choice"
   | "multiple_select"
@@ -141,8 +137,6 @@ export interface PlayState {
   reveal?: RevealInfo;
   /** multi_answer: shown once you have submitted (and on reveal). */
   bubbles?: BubbleData;
-  /** multi_answer: the live chat of answers (who said what), oldest first. Same visibility as `bubbles`. */
-  feed?: FeedItem[];
   /** multi_answer: what you submitted (so your bubbles stay highlighted after a refresh). */
   my_answers?: string[] | null;
   /** multi_answer: seconds until you may send your next answer (0 = go ahead). */
@@ -180,8 +174,6 @@ export interface HostQuestion {
   max_chars: number;
   /** multi_answer only. */
   bubbles: BubbleData | null;
-  /** multi_answer: the live chat, for the question on screen only (null otherwise). */
-  feed: FeedItem[] | null;
 }
 
 export interface HostDashboard {
