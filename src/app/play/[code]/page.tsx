@@ -574,8 +574,14 @@ function WaitCard({
   );
 }
 
+/** Other players' names shown before the rest collapse into a "+N others" chip. */
+const LOBBY_MAX_OTHERS = 11;
+
 function Lobby({ state }: { state: PlayState }) {
-  const players = state.players ?? [];
+  // You always come first (even if the server's recent-names list no longer includes you).
+  const others = (state.players ?? []).filter((n) => n !== state.name).slice(0, LOBBY_MAX_OTHERS);
+  const hidden = Math.max(0, state.player_count - 1 - others.length);
+  const players = [state.name, ...others];
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center px-5 pb-10 pt-8 text-center">
       <Logo small />
@@ -628,13 +634,18 @@ function Lobby({ state }: { state: PlayState }) {
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.4 }}
                 transition={{ type: "spring", stiffness: 420, damping: 22 }}
-                className={`rounded-full px-3.5 py-1.5 text-sm font-extrabold ${
+                className={`max-w-full truncate rounded-full px-3.5 py-1.5 text-sm font-extrabold ${
                   n === state.name ? "bg-accent text-accent-ink" : "bg-white/15"
                 }`}
               >
                 {n}
               </motion.li>
             ))}
+            {hidden > 0 && (
+              <li className="rounded-full border-2 border-dashed border-white/35 px-3.5 py-1.5 text-sm font-extrabold text-white/80">
+                +{hidden} other{hidden === 1 ? "" : "s"}
+              </li>
+            )}
           </AnimatePresence>
         </ul>
       </section>

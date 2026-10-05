@@ -402,23 +402,30 @@ export default function HostPage({ params }: PageProps<"/host/[id]">) {
 
 // ───────────────────────── Stages ─────────────────────────
 
+/** Names shown in the lobby before the rest collapse into a "+N others" chip. */
+const LOBBY_MAX_NAMES = 24;
+
 function LobbyStage({ data, playUrl }: { data: HostDashboard; playUrl: string }) {
   const players = data.players;
+  const shown = players.slice(0, LOBBY_MAX_NAMES);
+  const hidden = players.length - shown.length;
   const seconds = data.questions.reduce((s, q) => s + q.time_limit, 0);
   return (
-    <div className="grid gap-5 md:grid-cols-[auto_1fr]">
-      <section className="card flex flex-col items-center gap-3 p-6 text-center">
+    <div className="grid gap-5 md:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+      <section className="card flex flex-col items-center gap-3 self-start p-6 text-center">
         <span className="rounded-full bg-accent px-3 py-1 text-xs font-extrabold uppercase tracking-wider text-accent-ink">
           Scan to join
         </span>
         <div className="rounded-3xl bg-white p-4 shadow-xl">
           <QRCodeSVG value={playUrl} size={220} marginSize={0} fgColor="#1a0b36" />
         </div>
-        <p className="text-sm font-bold text-white/70">or enter the code at {new URL(playUrl).host}</p>
+        <p className="max-w-full break-all text-sm font-bold text-white/70">
+          or enter the code at {new URL(playUrl).host}
+        </p>
         <p className="font-display text-5xl font-bold tracking-[0.25em] text-accent">{data.quiz.code}</p>
       </section>
 
-      <section className="card p-6">
+      <section className="card min-w-0 p-6">
         <div className="flex items-baseline justify-between gap-3">
           <h2 className="font-display text-2xl font-semibold">Who&apos;s here</h2>
           <p className="font-display text-4xl font-bold">
@@ -444,7 +451,7 @@ function LobbyStage({ data, playUrl }: { data: HostDashboard; playUrl: string })
         ) : (
           <ul className="mt-4 flex flex-wrap gap-2">
             <AnimatePresence>
-              {players.map((p) => (
+              {shown.map((p) => (
                 <motion.li
                   key={p.id}
                   layout
@@ -452,11 +459,17 @@ function LobbyStage({ data, playUrl }: { data: HostDashboard; playUrl: string })
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.4 }}
                   transition={{ type: "spring", stiffness: 420, damping: 22 }}
-                  className="rounded-full bg-white/15 px-4 py-2 text-lg font-extrabold"
+                  className="max-w-full truncate rounded-full bg-white/15 px-4 py-2 text-lg font-extrabold"
+                  title={p.name}
                 >
                   {p.name}
                 </motion.li>
               ))}
+              {hidden > 0 && (
+                <li className="rounded-full border-2 border-dashed border-white/35 px-4 py-2 text-lg font-extrabold text-white/80">
+                  +{hidden} other{hidden === 1 ? "" : "s"}
+                </li>
+              )}
             </AnimatePresence>
           </ul>
         )}
