@@ -6,7 +6,8 @@ QuiSDDAD is an open-source quiz builder. Build a timed quiz in minutes, share a 
 
 ## Features
 
-- **Quiz builder** with five question types: multiple choice, select-all, true/false, typed answer, and poll
+- **Quiz builder** with six question types: multiple choice, select-all, true/false, typed answer, poll, and multi-answer
+- **Multi-answer** questions: players type up to N short answers (you set N from 1-20 and the max length, default 3 answers / 40 characters). Matching answers (ignoring capitals and extra spaces) merge into one **live bubble** that grows with every vote. Bubbles drift, bounce and collide on the host screen and on phones after submitting; drag to fling them. Honours `prefers-reduced-motion` with a static layout. Unscored, like polls. Shows the top 50 answers plus a "+N more" note
 - Per-question **timer** (10-90s) and **points**; faster correct answers earn more
 - Optional image per question, five colour themes, reorder / duplicate / delete questions, auto-saved drafts
 - **Two QR codes** after publishing: a *player* link anyone can scan, and a *private host* link that controls the game
@@ -64,6 +65,12 @@ Open http://localhost:3000. To let phones join, deploy it (for example to Vercel
 | `npm run dev` | Dev server |
 | `npm run build` / `npm start` | Production build / server |
 | `npm run lint` | ESLint |
+| `npm test` | Unit tests (`node --test`): answer validation and the bubble physics |
+
+## Tests
+
+- `npm test` runs the TypeScript unit tests with Node's built-in runner (no extra dependencies).
+- `supabase/tests/multi_answer.sql` checks the server-side rules against a scratch Postgres that has all migrations applied: `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/multi_answer.sql`.
 
 ## License
 

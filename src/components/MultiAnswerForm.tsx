@@ -57,7 +57,7 @@ export function MultiAnswerForm({ values, onChange, onSubmit, busy, maxAnswers, 
                 layout
                 initial={{ opacity: 0, y: 12, scale: 0.97 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
+                exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.12 } }}
                 className="flex items-start gap-2"
               >
                 <div className="min-w-0 flex-1">
