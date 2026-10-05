@@ -65,3 +65,23 @@ export function clampInt(n: number, min: number, max: number): number {
   if (!Number.isFinite(n)) return min;
   return Math.min(max, Math.max(min, Math.round(n)));
 }
+
+/**
+ * Best-effort cleanup used when the timer runs out mid-typing: keep what is usable
+ * (non-blank, within the length limit, first occurrence of each) up to the answer limit,
+ * instead of discarding everything because one box is invalid.
+ */
+export function salvageAnswers(raw: string[], limits: AnswerLimits): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const r of raw) {
+    const a = cleanAnswer(r);
+    if (a === "" || charCount(a) > limits.maxChars) continue;
+    const key = normalizeAnswer(a);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(a);
+    if (out.length >= limits.maxAnswers) break;
+  }
+  return out;
+}

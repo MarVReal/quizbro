@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { cleanAnswer, charCount, clampInt, normalizeAnswer, validateAnswers } from "./multi-answer.ts";
+import {
+  cleanAnswer,
+  charCount,
+  clampInt,
+  normalizeAnswer,
+  salvageAnswers,
+  validateAnswers,
+} from "./multi-answer.ts";
 
 const limits = { maxAnswers: 3, maxChars: 10 };
 
@@ -110,5 +117,22 @@ describe("clampInt", () => {
   test("falls back to the minimum for NaN / Infinity", () => {
     assert.equal(clampInt(Number.NaN, 1, 20), 1);
     assert.equal(clampInt(Number.POSITIVE_INFINITY, 1, 20), 1);
+  });
+});
+
+describe("salvageAnswers", () => {
+  test("keeps usable answers and drops blanks, duplicates and over-long ones", () => {
+    const r = salvageAnswers(["Pizza", "", "pizza", "x".repeat(40), "  tacos "], { maxAnswers: 5, maxChars: 10 });
+    assert.deepEqual(r, ["Pizza", "tacos"]);
+  });
+  test("never returns more than the answer limit", () => {
+    assert.deepEqual(salvageAnswers(["a", "b", "c", "d"], { maxAnswers: 2, maxChars: 10 }), ["a", "b"]);
+  });
+  test("returns nothing when nothing is usable", () => {
+    assert.deepEqual(salvageAnswers(["", "  "], limits), []);
+  });
+  test("its output always passes validateAnswers", () => {
+    const out = salvageAnswers(["A", "a", "", "b ", "ccccccccccccc"], limits);
+    assert.equal(validateAnswers(out, limits).ok, true);
   });
 });

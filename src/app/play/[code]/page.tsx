@@ -11,7 +11,9 @@ import {
   Spinner,
   TimerRing,
 } from "@/components/ui";
+import { MultiAnswerForm } from "@/components/MultiAnswerForm";
 import { getPlayState, getQuizPublic, joinQuiz, submitAnswer } from "@/lib/api";
+import { MAX_ANSWERS, MAX_CHARS, salvageAnswers } from "@/lib/multi-answer";
 import { bigConfetti, buzz, popConfetti } from "@/lib/fx";
 import {
   clearPlayerId,
@@ -58,14 +60,15 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
   // Per-question local input.
   const [selected, setSelected] = useState<number[]>([]);
   const [text, setText] = useState("");
+  const [boxes, setBoxes] = useState<string[]>([""]);
   const [locked, setLocked] = useState(false);
   const [answerError, setAnswerError] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
 
   const deadline = useRef(0);
-  const latest = useRef({ selected, text, locked, state, playerId });
+  const latest = useRef({ selected, text, boxes, locked, state, playerId });
   useEffect(() => {
-    latest.current = { selected, text, locked, state, playerId };
+    latest.current = { selected, text, boxes, locked, state, playerId };
   });
 
   const refresh = useCallback(async () => {
@@ -143,12 +146,13 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelected([]);
     setText("");
+    setBoxes([""]);
     setLocked(false);
     setAnswerError(null);
   }, [questionId]);
 
   const answer = useCallback(
-    async (value: number[] | string) => {
+    async (value: number[] | string | string[]) => {
       const { state: st, playerId: pid, locked: already } = latest.current;
       const q = st?.question;
       if (!q || !pid || already) return;
@@ -186,10 +190,16 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
       setSecondsLeft(left);
       if (left <= 0) {
         clearInterval(id);
-        const { selected: sel, text: txt, locked: done, state: st } = latest.current;
+        const { selected: sel, text: txt, boxes: mul, locked: done, state: st } = latest.current;
         if (done || !st?.question) return;
         if (st.question.type === "short_text") {
           if (txt.trim()) void answer(txt.trim());
+        } else if (st.question.type === "multi_answer") {
+          const keep = salvageAnswers(mul, {
+            maxAnswers: st.question.max_answers ?? MAX_ANSWERS.default,
+            maxChars: st.question.max_chars ?? MAX_CHARS.default,
+          });
+          if (keep.length) void answer(keep);
         } else if (sel.length) {
           void answer(sel);
         }
@@ -376,6 +386,7 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
   const answered = state.answered || locked;
   const multi = q.type === "multiple_select";
   const typed = q.type === "short_text";
+  const multiAnswer = q.type === "multi_answer";
   const two = q.options.length <= 2;
   const closed = !!state.closed;
 
@@ -437,12 +448,23 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
                     ? "Select all that apply, then lock in"
                     : typed
                       ? "Type your answer"
+                      : multiAnswer
+                        ? `Give up to ${q.max_answers ?? MAX_ANSWERS.default} answer${(q.max_answers ?? 1) === 1 ? "" : "s"}, then lock in`
                       : q.type === "poll"
                         ? "Poll, no points. Vote!"
                         : "Pick one"}
                 </p>
 
-                {typed ? (
+                {multiAnswer ? (
+                  <MultiAnswerForm
+                    values={boxes}
+                    onChange={setBoxes}
+                    onSubmit={(a) => void answer(a)}
+                    busy={busy}
+                    maxAnswers={q.max_answers ?? MAX_ANSWERS.default}
+                    maxChars={q.max_chars ?? MAX_CHARS.default}
+                  />
+                ) : typed ? (
                   <form
                     className="grid gap-3"
                     onSubmit={(e) => {
