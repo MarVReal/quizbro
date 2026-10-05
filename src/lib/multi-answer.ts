@@ -31,6 +31,31 @@ export function charCount(s: string): number {
   return n;
 }
 
+/** One chat message: somebody sent this answer. Ids only ever go up, so new messages are easy to spot. */
+export interface FeedItem {
+  id: number;
+  name: string;
+  text: string;
+  is_me: boolean;
+}
+
+/**
+ * The chat to show: the server's messages, plus the ones I just sent that the server hasn't echoed
+ * back yet (so my own message appears instantly). Once the server confirms one, it keeps the id I
+ * gave it, so it doesn't pop in a second time.
+ */
+export function mergeFeed(server: FeedItem[], pending: FeedItem[]): FeedItem[] {
+  const claimed = new Set<number>();
+  const merged = server.map((s) => {
+    if (!s.is_me) return s;
+    const mine = pending.find((p) => !claimed.has(p.id) && normalizeAnswer(p.text) === normalizeAnswer(s.text));
+    if (!mine) return s;
+    claimed.add(mine.id);
+    return { ...s, id: mine.id };
+  });
+  return [...merged, ...pending.filter((p) => !claimed.has(p.id))];
+}
+
 export interface AnswerLimits {
   maxAnswers: number;
   maxChars: number;

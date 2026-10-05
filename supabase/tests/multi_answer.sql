@@ -231,5 +231,95 @@ begin
   begin perform submit_answer(p1, qpoll, '[1]'::jsonb); raise exception 'accepted'; exception when others then assert sqlerrm = 'Already answered', sqlerrm; end;
   begin perform submit_answer(p2, qpoll, '"a"'::jsonb); raise exception 'accepted'; exception when others then assert sqlerrm = 'Invalid answer', sqlerrm; end;
 
+  raise notice 'ONE-AT-A-TIME TESTS PASSED';
+end $$;
+
+-- ───────────────────────── Live chat feed ─────────────────────────
+do $$
+declare
+  tok text := repeat('f', 32);
+  quiz jsonb; qid uuid; code text; q1 uuid; q2 uuid;
+  p1 uuid; p2 uuid; p3 uuid; st jsonb; dash jsonb; feed jsonb;
+begin
+  quiz := create_quiz('Chat', '', 'grape', tok, jsonb_build_array(
+    jsonb_build_object('type','multi_answer','prompt','one','max_answers',5,'max_chars',20,'time_limit',60),
+    jsonb_build_object('type','multi_answer','prompt','two','max_answers',5,'max_chars',20,'time_limit',60)
+  ));
+  qid := (quiz->>'id')::uuid; code := quiz->>'code';
+  select id into q1 from questions where quiz_id = qid and pos = 1;
+  select id into q2 from questions where quiz_id = qid and pos = 2;
+  p1 := (join_quiz(code,'Ana')->>'player_id')::uuid;
+  p2 := (join_quiz(code,'Ben')->>'player_id')::uuid;
+  p3 := (join_quiz(code,'Cy')->>'player_id')::uuid;
+  perform host_action(qid, tok, 'start');
+
+  -- nothing yet
+  assert quizbro_feed(q1) = '[]'::jsonb, 'empty feed';
+
+  perform submit_answer(p1, q1, '"Pizza"'::jsonb);
+  perform submit_answer(p2, q1, '"  tacos "'::jsonb);
+  update answers set answered_at = now() - interval '5 seconds' where player_id = p1 and question_id = q1;
+  perform submit_answer(p1, q1, '"Sushi"'::jsonb);
+  perform submit_answer(p3, q1, '["Ramen","Pho"]'::jsonb);          -- a list lands as separate messages, in order
+
+  -- every answer is one chat message, oldest first, with the sender's name and cleaned text
+  feed := quizbro_feed(q1, p1);
+  assert jsonb_array_length(feed) = 5, 'five messages: ' || feed::text;
+  assert (select string_agg(m->>'name' || ':' || (m->>'text'), ' | ' order by ord) from jsonb_array_elements(feed) with ordinality as t(m, ord))
+         = 'Ana:Pizza | Ben:tacos | Ana:Sushi | Cy:Ramen | Cy:Pho', 'order and names';
+  -- ids only ever go up, so a client can tell which messages are new
+  assert (select bool_and((m->>'id')::bigint > coalesce(lag_id, 0)) from (select m, lag((m->>'id')::bigint) over (order by ord) as lag_id from jsonb_array_elements(feed) with ordinality as t(m, ord)) x), 'ids increase';
+  -- is_me marks my own messages only
+  assert (select count(*) from jsonb_array_elements(feed) m where (m->>'is_me')::boolean) = 2, 'two of mine';
+  assert (select count(*) from jsonb_array_elements(quizbro_feed(q1, null)) m where (m->>'is_me')::boolean) = 0, 'host view has no "me"';
+  -- the limit keeps the newest
+  assert (select string_agg(m->>'text', ',' order by ord) from jsonb_array_elements(quizbro_feed(q1, null, 2)) with ordinality as t(m, ord)) = 'Ramen,Pho', 'limit keeps newest';
+
+end $$;
+
+do $$
+declare
+  tok text := repeat('g', 32);
+  quiz jsonb; qid uuid; code text; q1 uuid; p1 uuid; p2 uuid; st jsonb; dash jsonb;
+begin
+  quiz := create_quiz('Chat2', '', 'grape', tok, jsonb_build_array(
+    jsonb_build_object('type','multi_answer','prompt','one','max_answers',5,'max_chars',20,'time_limit',60),
+    jsonb_build_object('type','multi_answer','prompt','two','max_answers',5,'max_chars',20,'time_limit',60)));
+  qid := (quiz->>'id')::uuid; code := quiz->>'code';
+  select id into q1 from questions where quiz_id = qid and pos = 1;
+  p1 := (join_quiz(code,'Ana')->>'player_id')::uuid;
+  p2 := (join_quiz(code,'Ben')->>'player_id')::uuid;
+  perform host_action(qid, tok, 'start');
+
+  assert not (get_play_state(p1) ? 'feed'), 'no chat before your first answer';
+  perform submit_answer(p1, q1, '"Pizza"'::jsonb);
+  st := get_play_state(p1);
+  assert (st->'feed'->0->>'name') = 'Ana' and (st->'feed'->0->>'text') = 'Pizza' and (st->'feed'->0->>'is_me') = 'true', 'phone sees its own message in the chat';
+  assert not (get_play_state(p2) ? 'feed'), 'still nothing for someone who has not answered';
+  perform submit_answer(p2, q1, '"Tacos"'::jsonb);
+  st := get_play_state(p1);
+  assert jsonb_array_length(st->'feed') = 2 and (st->'feed'->1->>'name') = 'Ben' and (st->'feed'->1->>'is_me') = 'false', 'sees Ben too';
+
+  -- the host gets the chat for the question on screen only
+  dash := host_get_dashboard(qid, tok);
+  assert jsonb_array_length(dash->'questions'->0->'feed') = 2, 'host feed for the current question';
+  assert (dash->'questions'->1->'feed') = 'null'::jsonb, 'no feed for other questions';
+
+  -- the chat is private to the database: no direct reads
+  begin
+    set local role anon;
+    perform 1 from public.answer_feed limit 1;
+    reset role;
+    raise exception 'anon could read answer_feed';
+  exception when insufficient_privilege then
+    reset role;
+  end;
+
+  -- removing a player (Play again) removes their messages
+  perform host_action(qid, tok, 'reveal'); perform host_action(qid, tok, 'next');   -- question 2
+  perform host_action(qid, tok, 'reveal'); perform host_action(qid, tok, 'next');   -- finished
+  perform host_action(qid, tok, 'reset');
+  assert (select count(*) from answer_feed where quiz_id = qid) = 0, 'reset clears the chat';
+
   raise notice 'ALL SERVER TESTS PASSED';
 end $$;

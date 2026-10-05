@@ -5,6 +5,7 @@ import {
   cleanAnswer,
   charCount,
   clampInt,
+  mergeFeed,
   normalizeAnswer,
   validateNextAnswer,
 } from "./multi-answer.ts";
@@ -112,5 +113,45 @@ describe("clampInt", () => {
   test("falls back to the minimum for NaN / Infinity", () => {
     assert.equal(clampInt(Number.NaN, 1, 20), 1);
     assert.equal(clampInt(Number.POSITIVE_INFINITY, 1, 20), 1);
+  });
+});
+
+describe("mergeFeed", () => {
+  const msg = (id: number, name: string, text: string, is_me = false) => ({ id, name, text, is_me });
+
+  test("with nothing pending it is just the server's messages", () => {
+    const server = [msg(1, "Ana", "Pizza"), msg(2, "Ben", "Tacos")];
+    assert.deepEqual(mergeFeed(server, []), server);
+  });
+
+  test("a message I just sent shows up straight away, after everyone else's", () => {
+    const merged = mergeFeed([msg(5, "Ana", "Pizza")], [msg(-1, "Me", "Sushi", true)]);
+    assert.deepEqual(merged.map((m) => m.text), ["Pizza", "Sushi"]);
+    assert.equal(merged[1].id, -1);
+  });
+
+  test("once the server echoes it back, it keeps its original id and appears once (no second pop-in)", () => {
+    const merged = mergeFeed([msg(5, "Ana", "Pizza"), msg(6, "Me", "  SUSHI ", true)], [msg(-1, "Me", "Sushi", true)]);
+    assert.equal(merged.length, 2);
+    assert.equal(merged[1].id, -1, "client id kept");
+    assert.equal(merged[1].text, "  SUSHI ", "but the server's text and name win");
+  });
+
+  test("only my own messages can confirm a pending one", () => {
+    const merged = mergeFeed([msg(6, "Ben", "Sushi", false)], [msg(-1, "Me", "Sushi", true)]);
+    assert.equal(merged.length, 2);
+  });
+
+  test("two pending messages are confirmed one by one", () => {
+    const merged = mergeFeed(
+      [msg(7, "Me", "a", true)],
+      [msg(-1, "Me", "a", true), msg(-2, "Me", "b", true)],
+    );
+    assert.deepEqual(merged.map((m) => [m.id, m.text]), [[-1, "a"], [-2, "b"]]);
+  });
+
+  test("earlier messages of mine (e.g. after a refresh) are left alone", () => {
+    const server = [msg(3, "Me", "old", true), msg(4, "Ana", "x")];
+    assert.deepEqual(mergeFeed(server, []), server);
   });
 });

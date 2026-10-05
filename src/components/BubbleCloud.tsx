@@ -34,12 +34,12 @@ interface Props {
   data: BubbleData | null | undefined;
   /** The viewer's own answers, to highlight their bubbles. */
   mine?: string[] | null;
-  /** Height/shape of the cloud; the bubbles fill whatever box this gives. */
+  /** Size and position of the cloud (it needs `relative`/`absolute` plus a height); the bubbles fill that box. */
   className?: string;
   emptyText?: string;
 }
 
-function BubbleCloudImpl({ data, mine, className = "h-[24rem]", emptyText = "No answers yet" }: Props) {
+function BubbleCloudImpl({ data, mine, className = "relative h-[24rem]", emptyText = "No answers yet" }: Props) {
   const reduced = useReducedMotion() ?? false;
   const animate = !reduced;
   const items = useMemo(() => data?.items ?? [], [data]);
@@ -51,7 +51,7 @@ function BubbleCloudImpl({ data, mine, className = "h-[24rem]", emptyText = "No 
   return (
     <div
       ref={containerRef}
-      className={`relative w-full touch-pan-y overflow-hidden rounded-2xl bg-black/20 ${className}`}
+      className={`w-full touch-pan-y overflow-hidden rounded-2xl bg-black/20 ${className}`}
       role="group"
       aria-label="Answer bubbles"
       onPointerDown={(e) => {

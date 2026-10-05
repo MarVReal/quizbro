@@ -11,10 +11,17 @@ import {
   Spinner,
   TimerRing,
 } from "@/components/ui";
-import { BubbleCloud } from "@/components/BubbleCloud";
-import { MultiAnswerTurn, type Cooldown } from "@/components/MultiAnswerTurn";
+import { ChatComposer, type Cooldown } from "@/components/ChatComposer";
+import { LiveAnswers } from "@/components/LiveAnswers";
 import { getPlayState, getQuizPublic, joinQuiz, submitAnswer } from "@/lib/api";
-import { ANSWER_COOLDOWN_S, MAX_ANSWERS, MAX_CHARS, validateNextAnswer } from "@/lib/multi-answer";
+import {
+  ANSWER_COOLDOWN_S,
+  MAX_ANSWERS,
+  MAX_CHARS,
+  mergeFeed,
+  validateNextAnswer,
+  type FeedItem,
+} from "@/lib/multi-answer";
 import { bigConfetti, buzz, popConfetti } from "@/lib/fx";
 import {
   clearPlayerId,
@@ -67,6 +74,9 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
   // multi_answer: the one answer being typed, answers sent this question, and the cooldown between sends.
   const [draft, setDraft] = useState("");
   const [sentLocal, setSentLocal] = useState<string[]>([]);
+  // Messages I just sent that the server hasn't echoed back yet, so they show in the chat instantly.
+  const [pending, setPending] = useState<FeedItem[]>([]);
+  const pendingId = useRef(0);
   const [cooldown, setCooldown] = useState<Cooldown>({ key: 0, ends: 0 });
   const sending = useRef(false);
   const [locked, setLocked] = useState(false);
@@ -164,6 +174,7 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
     setText("");
     setDraft("");
     setSentLocal([]);
+    setPending([]);
     setLocked(false);
     setAnswerError(null);
     // The very first state of a page load can already carry a cooldown (refresh mid-cooldown):
@@ -225,6 +236,7 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
         await submitAnswer(pid, q.id, check.answer);
         buzz(30);
         setSentLocal([...mine, check.answer]);
+        setPending((p) => [...p, { id: --pendingId.current, name: st?.name ?? "Me", text: check.answer, is_me: true }]);
         // Don't wipe what they've already started typing for the next one.
         if (latest.current.draft === raw) setDraft("");
         setCooldown((c) => ({ key: c.key + 1, ends: performance.now() + ANSWER_COOLDOWN_S * 1000 }));
@@ -457,6 +469,7 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
   const typed = q.type === "short_text";
   const multiAnswer = q.type === "multi_answer";
   const mineSent = longest(state.my_answers ?? [], sentLocal);
+  const chat = mergeFeed(state.feed ?? [], pending);
   const two = q.options.length <= 2;
   const closed = !!state.closed;
 
@@ -505,8 +518,8 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
             )}
 
             {multiAnswer ? (
-              <>
-                {closed ? (
+              <div className="flex flex-1 flex-col gap-3">
+                {closed && (
                   <WaitCard
                     answered={mineSent.length > 0}
                     closed
@@ -514,8 +527,34 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
                     players={state.player_count}
                     compact
                   />
+                )}
+                {/* The live stage (bubbles + chat) opens up once you've sent your first answer. */}
+                {state.bubbles || mineSent.length > 0 ? (
+                  <LiveAnswers
+                    bubbles={state.bubbles}
+                    feed={chat}
+                    mine={mineSent}
+                    emptyText="Your answer is on its way…"
+                    className="min-h-[18rem] flex-1"
+                  />
                 ) : (
-                  <MultiAnswerTurn
+                  !closed && (
+                    <div className="card grid flex-1 place-items-center px-6 py-8 text-center">
+                      <div>
+                        <p className="text-6xl" aria-hidden>
+                          💬
+                        </p>
+                        <p className="font-display mt-2 text-2xl font-semibold">Be the first!</p>
+                        <p className="mt-1 font-semibold text-white/75">
+                          Type an answer below. It pops up in the live chat and turns into a bubble for everyone.
+                        </p>
+                      </div>
+                    </div>
+                  )
+                )}
+                {!closed && (
+                  <ChatComposer
+                    className="sticky bottom-0 -mx-1 px-1 pb-1 pt-1"
                     sent={mineSent}
                     maxAnswers={q.max_answers ?? MAX_ANSWERS.default}
                     maxChars={q.max_chars ?? MAX_CHARS.default}
@@ -527,13 +566,7 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
                     onSend={(a) => void sendOne(a)}
                   />
                 )}
-                {/* Your answers go live straight away, so the cloud appears after your first one. */}
-                {state.bubbles && (
-                  <div className="mt-4">
-                    <BubbleCloud data={state.bubbles} mine={mineSent} className="h-[22rem]" />
-                  </div>
-                )}
-              </>
+              </div>
             ) : answered || closed ? (
               <WaitCard
                 answered={answered}
@@ -861,7 +894,7 @@ function RevealView({ state, q }: { state: PlayState; q: PlayQuestion }) {
 
       {q.type === "multi_answer" && state.bubbles && (
         <div className="mt-6 w-full">
-          <BubbleCloud data={state.bubbles} mine={state.my_answers} className="h-[22rem]" />
+          <LiveAnswers bubbles={state.bubbles} feed={state.feed} mine={state.my_answers} className="h-[24rem]" />
         </div>
       )}
 
@@ -899,14 +932,15 @@ function ResultsView({ state, onAgain }: { state: PlayState; onAgain: () => void
   const rank = state.rank ?? state.player_count;
   const review = state.review ?? [];
   // A poll-only quiz has no scores, so skip the rank, stats and leaderboard.
-  const pollOnly = review.length > 0 && review.every((r) => r.type === "poll");
+  const pollOnly = review.length > 0 && review.every((r) => r.type === "poll" || r.type === "multi_answer");
+  const votesOnly = review.length > 0 && review.every((r) => r.type === "poll");
   return (
     <main className="mx-auto max-w-lg px-4 pb-14 pt-8 text-center">
       <Logo small />
       <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} className="mt-6">
-        <p className="text-7xl">{pollOnly ? "📊" : rank <= 3 ? medal(rank) : "🎊"}</p>
+        <p className="text-7xl">{pollOnly ? (votesOnly ? "📊" : "💬") : rank <= 3 ? medal(rank) : "🎊"}</p>
         <h1 className="font-display mt-2 text-4xl font-bold">
-          {pollOnly ? "Thanks for voting!" : rank === 1 ? "You won!" : "Quiz complete!"}
+          {pollOnly ? (votesOnly ? "Thanks for voting!" : "Thanks for joining in!") : rank === 1 ? "You won!" : "Quiz complete!"}
         </h1>
         <p className="mt-1 font-semibold text-white/75">{state.quiz.title}</p>
       </motion.div>

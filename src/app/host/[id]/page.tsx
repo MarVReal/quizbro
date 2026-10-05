@@ -13,7 +13,7 @@ import {
   Spinner,
   TimerRing,
 } from "@/components/ui";
-import { BubbleCloud } from "@/components/BubbleCloud";
+import { LiveAnswers } from "@/components/LiveAnswers";
 import { hostAction, hostDashboard } from "@/lib/api";
 import { bigConfetti } from "@/lib/fx";
 import { getMyQuizzes, saveMyQuiz } from "@/lib/storage";
@@ -572,7 +572,13 @@ function QuestionStage({
         <PollChart q={q} />
       ) : q.type === "multi_answer" ? (
         <div className="mt-5">
-          <BubbleCloud data={q.bubbles} className="h-[26rem] sm:h-[30rem]" emptyText="Waiting for the first answers…" />
+          <LiveAnswers
+            variant="host"
+            bubbles={q.bubbles}
+            feed={q.feed}
+            className="h-[28rem] sm:h-[34rem]"
+            emptyText="Waiting for the first answers…"
+          />
         </div>
       ) : (
         <ul className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -729,7 +735,7 @@ function RevealStage({ data, q }: { data: HostDashboard; q: HostQuestion }) {
         <PollChart q={q} />
       ) : q.type === "multi_answer" ? (
         <div className="mt-5">
-          <BubbleCloud data={q.bubbles} className="h-[26rem] sm:h-[30rem]" />
+          <LiveAnswers variant="host" bubbles={q.bubbles} feed={q.feed} className="h-[28rem] sm:h-[34rem]" />
         </div>
       ) : (
         <ul className="mt-5 grid gap-2.5">
@@ -774,10 +780,18 @@ function RevealStage({ data, q }: { data: HostDashboard; q: HostQuestion }) {
 
 function FinishedStage({ data, pollOnly }: { data: HostDashboard; pollOnly: boolean }) {
   if (pollOnly) {
+    // Name what actually ran: all polls, all live multi-answer questions, or a mix of the two.
+    const allPolls = data.questions.every((x) => x.type === "poll");
+    const allLive = data.questions.every((x) => x.type === "multi_answer");
+    const [icon, title] = allPolls
+      ? ["📊", "Poll complete"]
+      : allLive
+        ? ["💬", "Live answers complete"]
+        : ["🎉", "Session complete"];
     return (
       <section className="card p-6 text-center">
-        <p className="text-5xl">📊</p>
-        <h2 className="font-display mt-2 text-4xl font-bold sm:text-5xl">Poll complete</h2>
+        <p className="text-5xl">{icon}</p>
+        <h2 className="font-display mt-2 text-4xl font-bold sm:text-5xl">{title}</h2>
         <p className="mt-4 font-semibold text-white/70">
           {data.players.length} participant{data.players.length === 1 ? "" : "s"} took part. Press Play again to
           reuse this with a fresh lobby.
