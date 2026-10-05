@@ -1,8 +1,8 @@
-# Quizbro
+# QuiSDDAD
 
 Make a quiz. Scan. Play.
 
-Quizbro is an open-source quiz builder. Build a timed quiz in minutes, share a QR code, and everyone plays from their phone with no app and no sign-up. You run the game from a private host screen: see who has joined, start it, reveal each answer and show the leaderboard.
+QuiSDDAD is an open-source quiz builder. Build a timed quiz in minutes, share a QR code, and everyone plays from their phone with no app and no sign-up. You run the game from a private host screen: see who has joined, start it, reveal each answer and show the leaderboard.
 
 ## Features
 

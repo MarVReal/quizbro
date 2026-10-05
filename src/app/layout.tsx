@@ -15,7 +15,7 @@ const body = Nunito({
 });
 
 export const metadata: Metadata = {
-  title: "Quizbro — make a quiz, scan, play",
+  title: "QuiSDDAD — make a quiz, scan, play",
   description:
     "Build a quiz in minutes, share a QR code, and let everyone play from their phone while you watch the answers roll in live.",
 };

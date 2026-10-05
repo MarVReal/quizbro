@@ -730,20 +730,22 @@ function RevealView({ state, q }: { state: PlayState; q: PlayQuestion }) {
       )}
       {ok && state.streak >= 2 && <p className="mt-2 font-extrabold">🔥 {state.streak} in a row!</p>}
 
-      <section className="card mt-6 w-full p-4 text-left">
-        <div className="mb-2 flex items-baseline justify-between">
-          <h2 className="font-display text-xl font-semibold">Leaderboard</h2>
-          {state.rank && (
-            <p className="text-sm font-bold text-white/70">
-              You&apos;re #{state.rank} · <AnimatedNumber value={state.score} />
-            </p>
-          )}
-        </div>
-        <LeaderboardList
-          rows={state.leaderboard}
-          me={{ name: state.name, score: state.score, rank: state.rank }}
-        />
-      </section>
+      {!poll && (
+        <section className="card mt-6 w-full p-4 text-left">
+          <div className="mb-2 flex items-baseline justify-between">
+            <h2 className="font-display text-xl font-semibold">Leaderboard</h2>
+            {state.rank && (
+              <p className="text-sm font-bold text-white/70">
+                You&apos;re #{state.rank} · <AnimatedNumber value={state.score} />
+              </p>
+            )}
+          </div>
+          <LeaderboardList
+            rows={state.leaderboard}
+            me={{ name: state.name, score: state.score, rank: state.rank }}
+          />
+        </section>
+      )}
 
       <p className="mt-6 flex items-center gap-2 text-sm font-bold text-white/70">
         <motion.span
@@ -760,28 +762,37 @@ function RevealView({ state, q }: { state: PlayState; q: PlayQuestion }) {
 function ResultsView({ state, onAgain }: { state: PlayState; onAgain: () => void }) {
   const [open, setOpen] = useState(false);
   const rank = state.rank ?? state.player_count;
+  const review = state.review ?? [];
+  // A poll-only quiz has no scores, so skip the rank, stats and leaderboard.
+  const pollOnly = review.length > 0 && review.every((r) => r.type === "poll");
   return (
     <main className="mx-auto max-w-lg px-4 pb-14 pt-8 text-center">
       <Logo small />
       <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} className="mt-6">
-        <p className="text-7xl">{rank <= 3 ? medal(rank) : "🎊"}</p>
-        <h1 className="font-display mt-2 text-4xl font-bold">{rank === 1 ? "You won!" : "Quiz complete!"}</h1>
+        <p className="text-7xl">{pollOnly ? "📊" : rank <= 3 ? medal(rank) : "🎊"}</p>
+        <h1 className="font-display mt-2 text-4xl font-bold">
+          {pollOnly ? "Thanks for voting!" : rank === 1 ? "You won!" : "Quiz complete!"}
+        </h1>
         <p className="mt-1 font-semibold text-white/75">{state.quiz.title}</p>
       </motion.div>
 
-      <div className="mt-6 grid grid-cols-3 gap-3">
-        <Stat label="Score" value={<AnimatedNumber value={state.score} />} />
-        <Stat label="Rank" value={`${rank}/${state.player_count}`} />
-        <Stat label="Correct" value={state.correct} />
-      </div>
+      {!pollOnly && (
+        <>
+          <div className="mt-6 grid grid-cols-3 gap-3">
+            <Stat label="Score" value={<AnimatedNumber value={state.score} />} />
+            <Stat label="Rank" value={`${rank}/${state.player_count}`} />
+            <Stat label="Correct" value={state.correct} />
+          </div>
 
-      <section className="card mt-6 p-4 text-left">
-        <h2 className="font-display mb-2 text-xl font-semibold">Leaderboard</h2>
-        <LeaderboardList
-          rows={state.leaderboard}
-          me={{ name: state.name, score: state.score, rank: state.rank }}
-        />
-      </section>
+          <section className="card mt-6 p-4 text-left">
+            <h2 className="font-display mb-2 text-xl font-semibold">Leaderboard</h2>
+            <LeaderboardList
+              rows={state.leaderboard}
+              me={{ name: state.name, score: state.score, rank: state.rank }}
+            />
+          </section>
+        </>
+      )}
 
       <section className="card mt-4 p-4 text-left">
         <button
@@ -793,7 +804,7 @@ function ResultsView({ state, onAgain }: { state: PlayState; onAgain: () => void
         </button>
         {open && (
           <ul className="mt-3 grid gap-2">
-            {(state.review ?? []).map((r) => (
+            {review.map((r) => (
               <ReviewItem key={r.pos} r={r} />
             ))}
           </ul>

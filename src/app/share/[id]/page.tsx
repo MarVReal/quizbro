@@ -81,7 +81,7 @@ export default function SharePage({ params }: PageProps<"/share/[id]">) {
 
         <div className="mt-8 grid gap-5 md:grid-cols-2">
           <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
-            <QRCard title="Players scan this" badge="For players" url={playUrl} filename={`quizbro-${code}-join`}>
+            <QRCard title="Players scan this" badge="For players" url={playUrl} filename={`quisddad-${code}-join`}>
               <div>
                 <p className="text-sm font-bold text-white/70">or enter the code. Players wait in a lobby until you start.</p>
                 <p className="font-display text-5xl font-bold tracking-[0.25em] text-accent">{code}</p>
@@ -91,7 +91,7 @@ export default function SharePage({ params }: PageProps<"/share/[id]">) {
           </motion.div>
 
           <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
-            <QRCard title="Your answers dashboard" badge="Private · host only" url={hostUrl} filename={`quizbro-${code}-host`} tone="host">
+            <QRCard title="Your answers dashboard" badge="Private · host only" url={hostUrl} filename={`quisddad-${code}-host`} tone="host">
               <p className="max-w-xs text-sm font-semibold text-white/75">
                 Open this on your own device to run the game: see who joined, start it, reveal each answer and
                 show the leaderboard. Anyone with this link can control the game, so keep it private.

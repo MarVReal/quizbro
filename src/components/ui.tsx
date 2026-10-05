@@ -10,13 +10,15 @@ export function Logo({ href = "/", small = false }: { href?: string; small?: boo
       href={href}
       className={`font-display inline-flex items-center gap-2 font-bold ${small ? "text-xl" : "text-3xl"}`}
     >
-      <span
-        className="inline-grid place-items-center rounded-xl bg-accent text-accent-ink"
-        style={{ width: small ? 30 : 42, height: small ? 30 : 42, transform: "rotate(-8deg)" }}
-      >
-        ?
-      </span>
-      Quizbro
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/logo.png"
+        alt=""
+        width={small ? 30 : 42}
+        height={small ? 30 : 42}
+        className="rounded-xl"
+      />
+      QuiSDDAD
     </Link>
   );
 }

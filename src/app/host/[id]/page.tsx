@@ -209,6 +209,11 @@ export default function HostPage({ params }: PageProps<"/host/[id]">) {
   const live = now - updated < POLL_MS * 4 && !error;
   const cur = data.state.current_pos;
   const q = cur > 0 ? data.questions[cur - 1] : undefined;
+  // Polls have no scores or right answers, so they get no leaderboard or per-question breakdown.
+  const pollOnly = data.questions.length > 0 && data.questions.every((x) => x.type === "poll");
+  const showOverview =
+    (data.state.status === "reveal" && q?.type !== "poll") ||
+    (data.state.status === "finished" && !pollOnly);
 
   function exportCsv() {
     if (!data) return;
@@ -220,7 +225,7 @@ export default function HostPage({ params }: PageProps<"/host/[id]">) {
     const blob = new Blob([rows.map((r) => r.map(esc).join(",")).join("\n")], { type: "text/csv" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `quizbro-${data.quiz.code}-results.csv`;
+    a.download = `quisddad-${data.quiz.code}-results.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -273,12 +278,12 @@ export default function HostPage({ params }: PageProps<"/host/[id]">) {
               <QuestionStage data={data} q={q} secondsLeft={secondsLeft} now={now} />
             )}
             {data.state.status === "reveal" && q && <RevealStage data={data} q={q} />}
-            {data.state.status === "finished" && <FinishedStage data={data} />}
+            {data.state.status === "finished" && <FinishedStage data={data} pollOnly={pollOnly} />}
           </motion.div>
         </AnimatePresence>
 
         {/* Hidden mid-question so live scores can't give the answer away on a shared screen. */}
-        {data.state.status !== "lobby" && data.state.status !== "question" && (
+        {showOverview && (
           <section className="mt-10">
             <div className="flex items-center justify-between gap-3">
               <div role="tablist" className="inline-flex rounded-full bg-black/25 p-1">
@@ -742,7 +747,19 @@ function RevealStage({ data, q }: { data: HostDashboard; q: HostQuestion }) {
   );
 }
 
-function FinishedStage({ data }: { data: HostDashboard }) {
+function FinishedStage({ data, pollOnly }: { data: HostDashboard; pollOnly: boolean }) {
+  if (pollOnly) {
+    return (
+      <section className="card p-6 text-center">
+        <p className="text-5xl">📊</p>
+        <h2 className="font-display mt-2 text-4xl font-bold sm:text-5xl">Poll complete</h2>
+        <p className="mt-4 font-semibold text-white/70">
+          {data.players.length} participant{data.players.length === 1 ? "" : "s"} voted. Press Play again to
+          reuse this poll with a fresh lobby.
+        </p>
+      </section>
+    );
+  }
   const rows = ranked(data.players);
   const podium = [rows[1], rows[0], rows[2]]; // 2nd · 1st · 3rd
   const heights = ["h-28", "h-40", "h-20"];
