@@ -7,7 +7,7 @@ QuiSDDAD is an open-source quiz builder. Build a timed quiz in minutes, share a 
 ## Features
 
 - **Quiz builder** with six question types: multiple choice, select-all, true/false, typed answer, poll, and multi-answer
-- **Multi-answer** questions: players type up to N short answers (you set N from 1-20 and the max length, default 3 answers / 40 characters). Matching answers (ignoring capitals and extra spaces) merge into one **live bubble** that grows with every vote. Bubbles drift, bounce and collide on the host screen and on phones after submitting; drag to fling them. Honours `prefers-reduced-motion` with a static layout. Unscored, like polls. Shows the top 50 answers plus a "+N more" note
+- **Multi-answer** questions: players send up to N short answers (you set N from 1-20 and the max length, default 3 answers / 40 characters) **one at a time**, with a short "reload" countdown between answers (enforced on the server too). Each answer goes live immediately. Matching answers (ignoring capitals and extra spaces) merge into one **live bubble** that grows with every vote. Bubbles drift, bounce and collide on the host screen and on phones after the first answer; drag to fling them. Honours `prefers-reduced-motion`. Unscored, like polls. Shows the top 50 answers plus a "+N more" note
 - Per-question **timer** (10-90s) and **points**; faster correct answers earn more
 - Optional image per question, five colour themes, reorder / duplicate / delete questions, auto-saved drafts
 - **Two QR codes** after publishing: a *player* link anyone can scan, and a *private host* link that controls the game
@@ -20,7 +20,7 @@ QuiSDDAD is an open-source quiz builder. Build a timed quiz in minutes, share a 
 
 ## Stack
 
-Next.js (App Router) · React · Tailwind CSS 4 · Framer Motion · canvas-confetti · qrcode.react · Supabase (Postgres)
+Next.js (App Router) · React · Tailwind CSS 4 · Framer Motion · GSAP · canvas-confetti · qrcode.react · Supabase (Postgres)
 
 ## Run it yourself
 

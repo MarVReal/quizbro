@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import {
+  ANSWER_COOLDOWN_S,
   cleanAnswer,
   charCount,
   clampInt,
   normalizeAnswer,
-  salvageAnswers,
-  validateAnswers,
+  validateNextAnswer,
 } from "./multi-answer.ts";
 
 const limits = { maxAnswers: 3, maxChars: 10 };
@@ -46,65 +46,60 @@ describe("charCount", () => {
   });
 });
 
-describe("validateAnswers", () => {
-  test("accepts and returns trimmed, space-collapsed answers in order", () => {
-    const r = validateAnswers(["  Pizza ", "ta   cos"], limits);
-    assert.deepEqual(r, { ok: true, answers: ["Pizza", "ta cos"] });
+describe("validateNextAnswer", () => {
+  test("accepts a good answer and returns it trimmed and space-collapsed", () => {
+    assert.deepEqual(validateNextAnswer("  ta   cos ", [], limits), { ok: true, answer: "ta cos" });
   });
 
-  test("rejects an empty submission", () => {
-    const r = validateAnswers([], limits);
-    assert.equal(r.ok, false);
-  });
-
-  test("rejects blanks and whitespace-only answers, pointing at the input", () => {
+  test("rejects blanks and whitespace-only answers", () => {
     for (const blank of ["", "   ", "\t\n", "\u00a0"]) {
-      const r = validateAnswers(["ok", blank], limits);
-      assert.deepEqual(r, { ok: false, error: "Answers can't be blank", index: 1 });
+      assert.deepEqual(validateNextAnswer(blank, [], limits), { ok: false, error: "Type an answer first" });
     }
   });
 
-  test("rejects case-insensitive duplicates and points at the second one", () => {
-    const r = validateAnswers(["Pizza", "tacos", "PIZZA"], limits);
-    assert.deepEqual(r, { ok: false, error: "You entered the same answer twice", index: 2 });
-    assert.equal(validateAnswers(["a b", "A   B"], limits).ok, false);
-  });
-
-  test("enforces the max number of answers", () => {
-    assert.equal(validateAnswers(["a", "b", "c"], limits).ok, true);
-    const r = validateAnswers(["a", "b", "c", "d"], limits);
-    assert.deepEqual(r, { ok: false, error: "You can give up to 3 answers" });
-    assert.deepEqual(validateAnswers(["a", "b"], { maxAnswers: 1, maxChars: 10 }), {
+  test("enforces the max length exactly at the boundary, after trimming", () => {
+    assert.equal(validateNextAnswer("x".repeat(10), [], limits).ok, true);
+    assert.equal(validateNextAnswer("   " + "x".repeat(10) + "   ", [], limits).ok, true);
+    assert.deepEqual(validateNextAnswer("x".repeat(11), [], limits), {
       ok: false,
-      error: "You can give up to 1 answer",
+      error: "Keep each answer to 10 characters or fewer",
     });
   });
 
-  test("enforces the max length exactly at the boundary", () => {
-    assert.equal(validateAnswers(["x".repeat(10)], limits).ok, true);
-    const r = validateAnswers(["x".repeat(11)], limits);
-    assert.deepEqual(r, { ok: false, error: "Keep each answer to 10 characters or fewer", index: 0 });
-  });
-
-  test("length is measured after trimming and collapsing", () => {
-    assert.equal(validateAnswers(["   " + "x".repeat(10) + "   "], limits).ok, true);
-    assert.equal(validateAnswers(["a" + " ".repeat(30) + "b"], limits).ok, true); // becomes "a b"
-  });
-
   test("emoji each count as one character", () => {
-    assert.equal(validateAnswers(["🍕".repeat(10)], limits).ok, true);
-    assert.equal(validateAnswers(["🍕".repeat(11)], limits).ok, false);
+    assert.equal(validateNextAnswer("🍕".repeat(10), [], limits).ok, true);
+    assert.equal(validateNextAnswer("🍕".repeat(11), [], limits).ok, false);
   });
 
   test("a very long single word is rejected rather than truncated", () => {
-    const r = validateAnswers(["supercalifragilisticexpialidocious"], limits);
-    assert.equal(r.ok, false);
+    assert.equal(validateNextAnswer("supercalifragilisticexpialidocious", [], limits).ok, false);
   });
 
-  test("reports the first problem when several exist", () => {
-    const r = validateAnswers(["", "x".repeat(50)], limits);
-    assert.deepEqual(r, { ok: false, error: "Answers can't be blank", index: 0 });
+  test("refuses an answer you already sent, ignoring case and spacing", () => {
+    const mine = ["Pizza", "New York"];
+    for (const dup of ["pizza", "  PIZZA ", "new   york"]) {
+      assert.deepEqual(validateNextAnswer(dup, mine, limits), { ok: false, error: "You already gave that answer" });
+    }
+    assert.equal(validateNextAnswer("Pizzas", mine, limits).ok, true);
   });
+
+  test("stops once all answers are used, even for a perfectly good one", () => {
+    assert.deepEqual(validateNextAnswer("fresh", ["a", "b", "c"], limits), {
+      ok: false,
+      error: "You have used all your answers",
+    });
+    assert.equal(validateNextAnswer("fresh", ["a", "b"], limits).ok, true);
+  });
+
+  test("a one-answer question allows exactly one", () => {
+    const one = { maxAnswers: 1, maxChars: 10 };
+    assert.equal(validateNextAnswer("a", [], one).ok, true);
+    assert.equal(validateNextAnswer("b", ["a"], one).ok, false);
+  });
+});
+
+test("the cooldown between answers is a few seconds (and matches the server)", () => {
+  assert.equal(ANSWER_COOLDOWN_S, 3);
 });
 
 describe("clampInt", () => {
@@ -117,22 +112,5 @@ describe("clampInt", () => {
   test("falls back to the minimum for NaN / Infinity", () => {
     assert.equal(clampInt(Number.NaN, 1, 20), 1);
     assert.equal(clampInt(Number.POSITIVE_INFINITY, 1, 20), 1);
-  });
-});
-
-describe("salvageAnswers", () => {
-  test("keeps usable answers and drops blanks, duplicates and over-long ones", () => {
-    const r = salvageAnswers(["Pizza", "", "pizza", "x".repeat(40), "  tacos "], { maxAnswers: 5, maxChars: 10 });
-    assert.deepEqual(r, ["Pizza", "tacos"]);
-  });
-  test("never returns more than the answer limit", () => {
-    assert.deepEqual(salvageAnswers(["a", "b", "c", "d"], { maxAnswers: 2, maxChars: 10 }), ["a", "b"]);
-  });
-  test("returns nothing when nothing is usable", () => {
-    assert.deepEqual(salvageAnswers(["", "  "], limits), []);
-  });
-  test("its output always passes validateAnswers", () => {
-    const out = salvageAnswers(["A", "a", "", "b ", "ccccccccccccc"], limits);
-    assert.equal(validateAnswers(out, limits).ok, true);
   });
 });

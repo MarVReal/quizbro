@@ -68,7 +68,7 @@ begin
   assert not (st ? 'bubbles'), 'no bubbles before answering';
 
   -- ── validation ──
-  foreach msg in array array['null','"str"','{"a":1}','[]','[1]','[""]','["  "]','["abcdefghijk"]','["a","b","c","d"]','["Pizza","pizza"]','["x"," X "]'] loop
+  foreach msg in array array['null','""','"   "','"abcdefghijk"','{"a":1}','[]','[1]','[""]','["  "]','["abcdefghijk"]','["a","b","c","d"]','["Pizza","pizza"]','["x"," X "]'] loop
     begin
       perform submit_answer(p1, q_multi, msg::jsonb);
       raise exception 'should have failed for %', msg;
@@ -84,7 +84,7 @@ begin
   perform submit_answer(p1, q_multi, jsonb_build_array('Pizza', '  tacos ', 'abcdefghij'));
   assert (select answer from answers where player_id=p1 and question_id=q_multi) = '["Pizza","tacos","abcdefghij"]'::jsonb, 'trimmed on store';
   -- retry after success is rejected, not double-counted
-  begin perform submit_answer(p1, q_multi, '["again"]'::jsonb); raise exception 'dup'; exception when others then assert sqlerrm='Already answered', sqlerrm; end;
+  begin perform submit_answer(p1, q_multi, '"again"'::jsonb); raise exception 'dup'; exception when others then assert sqlerrm='You have used all your answers', sqlerrm; end;
   perform submit_answer(p2, q_multi, jsonb_build_array('PIZZA', 'Sushi', 'a'||chr(160)||chr(160)||'b'));
   perform submit_answer(p3, q_multi, jsonb_build_array('pizza', 'a b', U&'\+01F355'));
 
@@ -137,5 +137,99 @@ begin
   r := quizbro_bubbles(q_multi);
   assert jsonb_array_length(r->'items') = 50 and (r->>'more') = '11', 'cap 50, more=11 (61 unique): '||(r->>'more');
   assert (r->'items'->0->>'text') = 'common' and (r->'items'->0->>'count') = '30', 'biggest first';
+  raise notice 'BATCH TESTS PASSED';
+end $$;
+
+-- ───────────────────────── One answer at a time ─────────────────────────
+do $$
+declare
+  tok text := repeat('c', 32);
+  quiz jsonb; qid uuid; code text; q uuid; qpoll uuid;
+  p1 uuid; p2 uuid; st jsonb; dash jsonb; msg text; t1 timestamptz;
+  procedure_dummy int;
+  -- helper: pretend the player's last answer was `s` seconds ago
+  s_back text := 'update answers set answered_at = now() - make_interval(secs => %s) where player_id = %L and question_id = %L';
+begin
+  quiz := create_quiz('One at a time', '', 'grape', tok, jsonb_build_array(
+    jsonb_build_object('type','multi_answer','prompt','words','max_answers',3,'max_chars',10,'time_limit',60),
+    jsonb_build_object('type','poll','prompt','p','options',jsonb_build_array('a','b'),'time_limit',30)
+  ));
+  qid := (quiz->>'id')::uuid; code := quiz->>'code';
+  select id into q from questions where quiz_id = qid and pos = 1;
+  select id into qpoll from questions where quiz_id = qid and pos = 2;
+  p1 := (join_quiz(code,'one')->>'player_id')::uuid;
+  p2 := (join_quiz(code,'two')->>'player_id')::uuid;
+  perform host_action(qid, tok, 'start');
+
+  -- first single answer is accepted and appended as a one-item list
+  perform submit_answer(p1, q, '"Pizza"'::jsonb);
+  assert (select answer from answers where player_id = p1 and question_id = q) = '["Pizza"]'::jsonb, 'first answer stored';
+  t1 := (select answered_at from answers where player_id = p1 and question_id = q);
+
+  -- cooldown: an immediate second answer is refused and nothing changes
+  begin perform submit_answer(p1, q, '"Tacos"'::jsonb); raise exception 'accepted early'; exception when others then msg := sqlerrm; end;
+  assert msg = 'Wait a moment before your next answer', 'cooldown: ' || msg;
+  assert (select answer from answers where player_id = p1 and question_id = q) = '["Pizza"]'::jsonb, 'unchanged after refusal';
+
+  -- the phone is told how long is left, and sees its own answers + the cloud after the first send
+  st := get_play_state(p1);
+  assert (st->>'cooldown_left')::numeric > 2 and (st->>'cooldown_left')::numeric <= 3, 'cooldown_left: ' || (st->>'cooldown_left');
+  assert (st->'my_answers') = '["Pizza"]'::jsonb and (st->'answered') = 'true'::jsonb;
+  assert jsonb_array_length(st->'bubbles'->'items') = 1;
+  -- someone who has not answered yet sees no cloud (nothing to copy from)
+  assert not (get_play_state(p2) ? 'bubbles'), 'no cloud before your first answer';
+
+  -- after the cooldown: duplicates of your own earlier answers are refused (any casing/spacing) ...
+  execute format(s_back, 4, p1, q);
+  assert (get_play_state(p1)->>'cooldown_left')::numeric = 0, 'cooldown over';
+  foreach msg in array array['"pizza"','"  PIZZA "','["tacos","TACOS"]'] loop
+    begin perform submit_answer(p1, q, msg::jsonb); raise exception 'accepted %', msg; exception when others then
+      assert sqlerrm in ('You already gave that answer','You entered the same answer twice'), msg || ' -> ' || sqlerrm; end;
+  end loop;
+  -- ... blanks, too-long and wrong shapes are refused ...
+  foreach msg in array array['""','"   "','"abcdefghijk"','5','null','{"a":1}'] loop
+    begin perform submit_answer(p1, q, msg::jsonb); raise exception 'accepted %', msg; exception when others then
+      assert sqlerrm not like 'accepted%', 'unexpectedly accepted ' || msg; end;
+  end loop;
+  -- ... and a good one is appended in order, refreshing the cooldown clock
+  t1 := (select answered_at from answers where player_id = p1 and question_id = q);   -- back-dated by 4s above
+  perform submit_answer(p1, q, '" Tacos "'::jsonb);
+  assert (select answer from answers where player_id = p1 and question_id = q) = '["Pizza","Tacos"]'::jsonb, 'appended in order';
+  assert (select answered_at from answers where player_id = p1 and question_id = q) > t1, 'answered_at moved on';
+  assert (select count(*) from answers where player_id = p1 and question_id = q) = 1, 'still one row per player';
+
+  -- the third answer uses the last slot; a fourth is refused whether or not the cooldown has passed
+  execute format(s_back, 4, p1, q);
+  perform submit_answer(p1, q, '"Sushi"'::jsonb);
+  execute format(s_back, 4, p1, q);
+  begin perform submit_answer(p1, q, '"Ramen"'::jsonb); raise exception 'accepted 4th'; exception when others then msg := sqlerrm; end;
+  assert msg = 'You have used all your answers', msg;
+  begin perform submit_answer(p1, q, '"Ramen"'::jsonb); raise exception 'accepted 4th'; exception when others then msg := sqlerrm; end;
+
+  -- a list that would overflow the remaining slots is refused as a whole
+  perform submit_answer(p2, q, '"Pizza"'::jsonb);
+  execute format(s_back, 4, p2, q);
+  begin perform submit_answer(p2, q, '["a","b","c"]'::jsonb); raise exception 'accepted overflow'; exception when others then msg := sqlerrm; end;
+  assert msg = 'You only have 2 answers left', msg;
+  assert (select answer from answers where player_id = p2 and question_id = q) = '["Pizza"]'::jsonb, 'nothing partially stored';
+
+  -- the question stays open until everybody has used every answer (p2 still has 2 left)
+  assert (select question_ends_at from quizzes where id = qid) > now(), 'still open';
+  execute format(s_back, 4, p2, q); perform submit_answer(p2, q, '"Sushi"'::jsonb);
+  execute format(s_back, 4, p2, q); perform submit_answer(p2, q, '"Curry"'::jsonb);
+  assert (select question_ends_at from quizzes where id = qid) <= now(), 'closed once everyone used all answers';
+
+  -- bubbles merge across players and across their separate sends
+  dash := host_get_dashboard(qid, tok);
+  assert (dash->'questions'->0->'bubbles'->'items'->0->>'key') in ('pizza','sushi') and (dash->'questions'->0->'bubbles'->'items'->0->>'count') = '2', 'merged: ' || (dash->'questions'->0->'bubbles')::text;
+  assert jsonb_array_length(dash->'questions'->0->'bubbles'->'items') = 4, 'pizza, tacos, sushi, curry';
+  assert (dash->'questions'->0->>'answered') = '2', 'two players answered';
+
+  -- other question types still refuse a second answer and still reject bare strings where they must
+  perform host_action(qid, tok, 'reveal'); perform host_action(qid, tok, 'next');
+  perform submit_answer(p1, qpoll, '[0]'::jsonb);
+  begin perform submit_answer(p1, qpoll, '[1]'::jsonb); raise exception 'accepted'; exception when others then assert sqlerrm = 'Already answered', sqlerrm; end;
+  begin perform submit_answer(p2, qpoll, '"a"'::jsonb); raise exception 'accepted'; exception when others then assert sqlerrm = 'Invalid answer', sqlerrm; end;
+
   raise notice 'ALL SERVER TESTS PASSED';
 end $$;

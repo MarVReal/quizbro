@@ -12,9 +12,9 @@ import {
   TimerRing,
 } from "@/components/ui";
 import { BubbleCloud } from "@/components/BubbleCloud";
-import { MultiAnswerForm } from "@/components/MultiAnswerForm";
+import { MultiAnswerTurn, type Cooldown } from "@/components/MultiAnswerTurn";
 import { getPlayState, getQuizPublic, joinQuiz, submitAnswer } from "@/lib/api";
-import { MAX_ANSWERS, MAX_CHARS, salvageAnswers } from "@/lib/multi-answer";
+import { ANSWER_COOLDOWN_S, MAX_ANSWERS, MAX_CHARS, validateNextAnswer } from "@/lib/multi-answer";
 import { bigConfetti, buzz, popConfetti } from "@/lib/fx";
 import {
   clearPlayerId,
@@ -37,6 +37,9 @@ const POLL_MS = { lobby: 1500, question: 1000, reveal: 1500, finished: 5000 } as
 
 const medal = (rank: number) =>
   rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : `#${rank}`;
+
+/** Whichever list is longer: the server's copy of my answers, or what I've sent since the last poll. */
+const longest = (a: string[], b: string[]) => (b.length > a.length ? b : a);
 
 function describeCorrect(q: PlayQuestion, correct: RevealInfo["correct"]): string {
   if (!correct) return "";
@@ -61,15 +64,19 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
   // Per-question local input.
   const [selected, setSelected] = useState<number[]>([]);
   const [text, setText] = useState("");
-  const [boxes, setBoxes] = useState<string[]>([""]);
+  // multi_answer: the one answer being typed, answers sent this question, and the cooldown between sends.
+  const [draft, setDraft] = useState("");
+  const [sentLocal, setSentLocal] = useState<string[]>([]);
+  const [cooldown, setCooldown] = useState<Cooldown>({ key: 0, ends: 0 });
+  const sending = useRef(false);
   const [locked, setLocked] = useState(false);
   const [answerError, setAnswerError] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
 
   const deadline = useRef(0);
-  const latest = useRef({ selected, text, boxes, locked, state, playerId });
+  const latest = useRef({ selected, text, draft, sentLocal, cooldown, locked, state, playerId });
   useEffect(() => {
-    latest.current = { selected, text, boxes, locked, state, playerId };
+    latest.current = { selected, text, draft, sentLocal, cooldown, locked, state, playerId };
   });
 
   const refresh = useCallback(async () => {
@@ -81,6 +88,13 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
       setOffline(false);
       if (s.status === "question" && !s.closed) {
         deadline.current = performance.now() + (s.seconds_left ?? 0) * 1000;
+      }
+      if (s.cooldown_left !== undefined && s.cooldown_left > 0.15) {
+        // Only restart the ring when the server disagrees with our own clock by a real margin.
+        const ends = performance.now() + s.cooldown_left * 1000;
+        if (Math.abs(ends - latest.current.cooldown.ends) > 600) {
+          setCooldown((c) => ({ key: c.key + 1, ends }));
+        }
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "";
@@ -143,13 +157,19 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
 
   // New question => clear the local input.
   const questionId = state?.question?.id;
+  const prevQuestionId = useRef<string | undefined>(undefined);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelected([]);
     setText("");
-    setBoxes([""]);
+    setDraft("");
+    setSentLocal([]);
     setLocked(false);
     setAnswerError(null);
+    // The very first state of a page load can already carry a cooldown (refresh mid-cooldown):
+    // only drop it when moving from one question to another.
+    if (prevQuestionId.current !== undefined) setCooldown({ key: 0, ends: 0 });
+    prevQuestionId.current = questionId;
   }, [questionId]);
 
   const answer = useCallback(
@@ -181,6 +201,50 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
     [refresh],
   );
 
+  // Multi-answer sends ONE answer at a time, then waits out a short cooldown (the server enforces it too).
+  const sendOne = useCallback(
+    async (raw: string) => {
+      const { state: st, playerId: pid, sentLocal: local, cooldown: cd } = latest.current;
+      const q = st?.question;
+      if (!q || q.type !== "multi_answer" || !pid || sending.current) return;
+      if (performance.now() < cd.ends) return;
+      const limits = {
+        maxAnswers: q.max_answers ?? MAX_ANSWERS.default,
+        maxChars: q.max_chars ?? MAX_CHARS.default,
+      };
+      const mine = longest(st?.my_answers ?? [], local);
+      const check = validateNextAnswer(raw, mine, limits);
+      if (!check.ok) {
+        setAnswerError(check.error);
+        return;
+      }
+      sending.current = true;
+      setBusy(true);
+      setAnswerError(null);
+      try {
+        await submitAnswer(pid, q.id, check.answer);
+        buzz(30);
+        setSentLocal([...mine, check.answer]);
+        // Don't wipe what they've already started typing for the next one.
+        if (latest.current.draft === raw) setDraft("");
+        setCooldown((c) => ({ key: c.key + 1, ends: performance.now() + ANSWER_COOLDOWN_S * 1000 }));
+        if (mine.length + 1 >= limits.maxAnswers) popConfetti();
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "";
+        setAnswerError(
+          msg.includes("closed") || msg.includes("Time is up")
+            ? "Time's up before that went through."
+            : msg || "Couldn't send your answer. Try again.",
+        );
+      } finally {
+        sending.current = false;
+        setBusy(false);
+        void refresh();
+      }
+    },
+    [refresh],
+  );
+
   // Local countdown (display only; the server enforces the real deadline) and
   // an auto-submit of whatever is selected/typed when the timer hits zero.
   const running = state?.status === "question" && !state.closed;
@@ -191,23 +255,27 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
       setSecondsLeft(left);
       if (left <= 0) {
         clearInterval(id);
-        const { selected: sel, text: txt, boxes: mul, locked: done, state: st } = latest.current;
-        if (done || !st?.question) return;
+        const { selected: sel, text: txt, locked: done, state: st } = latest.current;
+        if (!st?.question || st.question.type === "multi_answer" || done) return;
         if (st.question.type === "short_text") {
           if (txt.trim()) void answer(txt.trim());
-        } else if (st.question.type === "multi_answer") {
-          const keep = salvageAnswers(mul, {
-            maxAnswers: st.question.max_answers ?? MAX_ANSWERS.default,
-            maxChars: st.question.max_chars ?? MAX_CHARS.default,
-          });
-          if (keep.length) void answer(keep);
         } else if (sel.length) {
           void answer(sel);
         }
       }
     }, 100);
     return () => clearInterval(id);
-  }, [running, questionId, answer]);
+  }, [running, questionId, answer, sendOne]);
+
+  // Multi-answer: when time runs out, make one last attempt at whatever is typed but unsent. Keyed on
+  // the server's "closed" flag too, because that can arrive before our own timer reaches zero. The
+  // server still has the final say (it allows a second of grace); blanks, repeats and cooldowns are ignored.
+  const timeIsUp = state?.status === "question" && !!state.closed && state.question?.type === "multi_answer";
+  useEffect(() => {
+    if (!timeIsUp) return;
+    const typing = latest.current.draft;
+    if (typing.trim()) void sendOne(typing);
+  }, [timeIsUp, questionId, sendOne]);
 
   // Celebrate (or not) when the host reveals the answer.
   const revealKey = state?.status === "reveal" ? questionId : undefined;
@@ -388,6 +456,7 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
   const multi = q.type === "multiple_select";
   const typed = q.type === "short_text";
   const multiAnswer = q.type === "multi_answer";
+  const mineSent = longest(state.my_answers ?? [], sentLocal);
   const two = q.options.length <= 2;
   const closed = !!state.closed;
 
@@ -435,25 +504,43 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
               />
             )}
 
-            {answered || closed ? (
+            {multiAnswer ? (
               <>
-                <WaitCard
-                  answered={answered}
-                  closed={closed}
-                  count={state.answered_count ?? 0}
-                  players={state.player_count}
-                  compact={multiAnswer}
-                />
-                {multiAnswer && state.bubbles && (
+                {closed ? (
+                  <WaitCard
+                    answered={mineSent.length > 0}
+                    closed
+                    count={state.answered_count ?? 0}
+                    players={state.player_count}
+                    compact
+                  />
+                ) : (
+                  <MultiAnswerTurn
+                    sent={mineSent}
+                    maxAnswers={q.max_answers ?? MAX_ANSWERS.default}
+                    maxChars={q.max_chars ?? MAX_CHARS.default}
+                    draft={draft}
+                    onDraft={setDraft}
+                    cooldown={cooldown}
+                    busy={busy}
+                    error={answerError}
+                    onSend={(a) => void sendOne(a)}
+                  />
+                )}
+                {/* Your answers go live straight away, so the cloud appears after your first one. */}
+                {state.bubbles && (
                   <div className="mt-4">
-                    <BubbleCloud
-                      data={state.bubbles}
-                      mine={state.my_answers ?? (answered ? boxes : null)}
-                      className="h-[22rem]"
-                    />
+                    <BubbleCloud data={state.bubbles} mine={mineSent} className="h-[22rem]" />
                   </div>
                 )}
               </>
+            ) : answered || closed ? (
+              <WaitCard
+                answered={answered}
+                closed={closed}
+                count={state.answered_count ?? 0}
+                players={state.player_count}
+              />
             ) : (
               <>
                 <p className="mb-3 text-sm font-bold text-white/70">
@@ -461,23 +548,12 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
                     ? "Select all that apply, then lock in"
                     : typed
                       ? "Type your answer"
-                      : multiAnswer
-                        ? `Give up to ${q.max_answers ?? MAX_ANSWERS.default} answer${(q.max_answers ?? 1) === 1 ? "" : "s"}, then lock in`
                       : q.type === "poll"
                         ? "Poll, no points. Vote!"
                         : "Pick one"}
                 </p>
 
-                {multiAnswer ? (
-                  <MultiAnswerForm
-                    values={boxes}
-                    onChange={setBoxes}
-                    onSubmit={(a) => void answer(a)}
-                    busy={busy}
-                    maxAnswers={q.max_answers ?? MAX_ANSWERS.default}
-                    maxChars={q.max_chars ?? MAX_CHARS.default}
-                  />
-                ) : typed ? (
+                {typed ? (
                   <form
                     className="grid gap-3"
                     onSubmit={(e) => {
@@ -554,7 +630,7 @@ export default function PlayPage({ params }: PageProps<"/play/[code]">) {
                 )}
               </>
             )}
-            {answerError && (
+            {answerError && !multiAnswer && (
               <div className="mt-3">
                 <ErrorBox>{answerError}</ErrorBox>
               </div>

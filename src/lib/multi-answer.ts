@@ -8,6 +8,12 @@ export const MAX_CHARS = { min: 1, max: 200, default: 40 } as const;
 /** Most bubbles the server returns (the rest are summarised as "+N more"). */
 export const BUBBLE_CAP = 50;
 
+/**
+ * Seconds a player waits between answers. The server enforces it (with half a second of slack):
+ * keep in sync with quizbro_answer_cooldown() in supabase/migrations.
+ */
+export const ANSWER_COOLDOWN_S = 3;
+
 /** Trim and collapse runs of whitespace: what is stored and shown. */
 export function cleanAnswer(s: string): string {
   return s.replace(/\s+/g, " ").trim();
@@ -30,58 +36,26 @@ export interface AnswerLimits {
   maxChars: number;
 }
 
-export type AnswerCheck =
-  | { ok: true; answers: string[] }
-  | { ok: false; error: string; /** index of the offending input, when there is one */ index?: number };
+export type NextAnswerCheck = { ok: true; answer: string } | { ok: false; error: string };
 
 /**
- * Validates a submission exactly like the server does: trimmed, no blanks, no
- * case-insensitive duplicates, within the count and length limits.
+ * Checks the next answer a player wants to send, given what they already sent. Same rules
+ * (and wording) as the server: not blank, short enough, not one they already gave.
  */
-export function validateAnswers(raw: string[], limits: AnswerLimits): AnswerCheck {
-  const { maxAnswers, maxChars } = limits;
-  if (raw.length === 0) return { ok: false, error: "Add at least one answer" };
-  if (raw.length > maxAnswers) {
-    return { ok: false, error: `You can give up to ${maxAnswers} answer${maxAnswers === 1 ? "" : "s"}` };
+export function validateNextAnswer(raw: string, mine: string[], limits: AnswerLimits): NextAnswerCheck {
+  if (mine.length >= limits.maxAnswers) return { ok: false, error: "You have used all your answers" };
+  const answer = cleanAnswer(raw);
+  if (answer === "") return { ok: false, error: "Type an answer first" };
+  if (charCount(answer) > limits.maxChars) {
+    return { ok: false, error: `Keep each answer to ${limits.maxChars} characters or fewer` };
   }
-  const seen = new Map<string, number>();
-  const answers: string[] = [];
-  for (let i = 0; i < raw.length; i++) {
-    const a = cleanAnswer(raw[i]);
-    if (a === "") return { ok: false, error: "Answers can't be blank", index: i };
-    if (charCount(a) > maxChars) {
-      return { ok: false, error: `Keep each answer to ${maxChars} characters or fewer`, index: i };
-    }
-    const key = normalizeAnswer(a);
-    if (seen.has(key)) return { ok: false, error: "You entered the same answer twice", index: i };
-    seen.set(key, i);
-    answers.push(a);
-  }
-  return { ok: true, answers };
+  const key = normalizeAnswer(answer);
+  if (mine.some((m) => normalizeAnswer(m) === key)) return { ok: false, error: "You already gave that answer" };
+  return { ok: true, answer };
 }
 
 /** Clamp a possibly-garbage number into a range (used by the creator's steppers). */
 export function clampInt(n: number, min: number, max: number): number {
   if (!Number.isFinite(n)) return min;
   return Math.min(max, Math.max(min, Math.round(n)));
-}
-
-/**
- * Best-effort cleanup used when the timer runs out mid-typing: keep what is usable
- * (non-blank, within the length limit, first occurrence of each) up to the answer limit,
- * instead of discarding everything because one box is invalid.
- */
-export function salvageAnswers(raw: string[], limits: AnswerLimits): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const r of raw) {
-    const a = cleanAnswer(r);
-    if (a === "" || charCount(a) > limits.maxChars) continue;
-    const key = normalizeAnswer(a);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(a);
-    if (out.length >= limits.maxAnswers) break;
-  }
-  return out;
 }

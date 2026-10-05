@@ -139,6 +139,8 @@ export interface PlayState {
   bubbles?: BubbleData;
   /** multi_answer: what you submitted (so your bubbles stay highlighted after a refresh). */
   my_answers?: string[] | null;
+  /** multi_answer: seconds until you may send your next answer (0 = go ahead). */
+  cooldown_left?: number;
   /** finished */
   review?: ReviewRow[];
 }
