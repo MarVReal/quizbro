@@ -516,7 +516,11 @@ function QuestionStage({
             {answered} / {total} answered
           </span>
           <span className="text-white/60">
-            {closed ? "Timer ended. Tap Reveal when ready." : "Answers stay hidden until you reveal"}
+            {closed
+              ? "Timer ended. Tap Reveal when ready."
+              : q.type === "poll"
+                ? "Votes update live"
+                : "Answers stay hidden until you reveal"}
           </span>
         </div>
         <div className="h-2.5 overflow-hidden rounded-full bg-white/15">
@@ -542,6 +546,8 @@ function QuestionStage({
             </ul>
           )}
         </div>
+      ) : q.type === "poll" ? (
+        <PollChart q={q} />
       ) : (
         <ul className="mt-5 grid gap-3 sm:grid-cols-2">
           {q.options.map((opt, i) => {
@@ -597,120 +603,142 @@ function QuestionStage({
   );
 }
 
+/** Live vertical bar graph of poll votes; the host dashboard refreshes every second so it moves as people vote. */
+function PollChart({ q }: { q: HostQuestion }) {
+  const counts = q.options.map((_, i) => q.counts?.[i] ?? 0);
+  const votes = counts.reduce((a, b) => a + b, 0);
+  const max = Math.max(1, ...counts);
+  return (
+    <div
+      className="mt-5 rounded-2xl bg-black/20 p-4 sm:p-5"
+      role="img"
+      aria-label={`Poll results: ${q.options.map((o, i) => `${o}, ${counts[i]} vote${counts[i] === 1 ? "" : "s"}`).join("; ")}`}
+    >
+      <div className="flex h-60 items-end gap-3 border-b-2 border-white/25 px-1 sm:gap-5">
+        {counts.map((n, i) => {
+          const st = OPTION_STYLES[i];
+          const pct = votes ? Math.round((n / votes) * 100) : 0;
+          return (
+            <div key={i} className="flex h-full min-w-0 flex-1 items-end justify-center">
+              <motion.div
+                className="relative w-full max-w-24 rounded-t-xl"
+                style={{ background: st.bg, minHeight: 6 }}
+                initial={{ height: 0 }}
+                animate={{ height: `${(n / max) * 82}%` }}
+                transition={{ type: "spring", stiffness: 140, damping: 20 }}
+              >
+                <div className="absolute inset-x-0 bottom-full mb-1 text-center leading-tight">
+                  <p className="font-display text-2xl font-bold">{n}</p>
+                  <p className="text-xs font-extrabold text-white/70">{pct}%</p>
+                </div>
+              </motion.div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-3 flex gap-3 px-1 sm:gap-5">
+        {q.options.map((opt, i) => (
+          <div key={i} className="flex min-w-0 flex-1 flex-col items-center gap-1.5 text-center">
+            <span
+              className="font-display grid h-8 w-8 place-items-center rounded-lg text-sm font-bold"
+              style={{ background: OPTION_STYLES[i].bg }}
+              aria-hidden
+            >
+              {OPTION_STYLES[i].letter}
+            </span>
+            <span className="line-clamp-2 w-full break-words text-sm font-extrabold">{opt}</span>
+          </div>
+        ))}
+      </div>
+      <p className="mt-3 text-center text-sm font-bold text-white/60">
+        {votes} vote{votes === 1 ? "" : "s"}
+      </p>
+    </div>
+  );
+}
+
 function RevealStage({ data, q }: { data: HostDashboard; q: HostQuestion }) {
   const correctSet = new Set(q.type === "short_text" ? [] : (q.correct as number[]));
   const max = Math.max(1, ...(q.counts ?? [0]));
   const pctRight = q.answered ? Math.round((q.right / q.answered) * 100) : null;
-  const top = ranked(data.players).slice(0, 5);
   return (
-    <div className="grid gap-5 lg:grid-cols-[3fr_2fr]">
-      <section className="card p-5 sm:p-7">
-        <QuestionHeader q={q} total={data.question_count} />
-        <h2 className="font-display mt-2 text-3xl font-semibold leading-tight">{q.prompt}</h2>
+    <section className="card p-5 sm:p-7">
+      <QuestionHeader q={q} total={data.question_count} />
+      <h2 className="font-display mt-2 text-3xl font-semibold leading-tight">{q.prompt}</h2>
 
-        <div className="mt-3 flex flex-wrap gap-2 text-sm font-extrabold">
-          <span className="rounded-full bg-white/15 px-3 py-1">
-            {q.answered}/{data.players.length} answered
+      <div className="mt-3 flex flex-wrap gap-2 text-sm font-extrabold">
+        <span className="rounded-full bg-white/15 px-3 py-1">
+          {q.answered}/{data.players.length} answered
+        </span>
+        {pctRight !== null && q.type !== "poll" && (
+          <span className={`rounded-full px-3 py-1 ${pctRight >= 60 ? "bg-[#06a77d]" : "bg-[#ef476f]"}`}>
+            {pctRight}% got it right
           </span>
-          {pctRight !== null && q.type !== "poll" && (
-            <span className={`rounded-full px-3 py-1 ${pctRight >= 60 ? "bg-[#06a77d]" : "bg-[#ef476f]"}`}>
-              {pctRight}% got it right
-            </span>
-          )}
-          {q.avg_time_ms !== null && (
-            <span className="rounded-full bg-white/15 px-3 py-1">avg {(q.avg_time_ms / 1000).toFixed(1)}s</span>
+        )}
+        {q.avg_time_ms !== null && (
+          <span className="rounded-full bg-white/15 px-3 py-1">avg {(q.avg_time_ms / 1000).toFixed(1)}s</span>
+        )}
+      </div>
+
+      {q.type === "short_text" ? (
+        <div className="mt-5">
+          <p className="mb-2 text-sm font-bold text-white/70">Correct answer</p>
+          <p className="font-display rounded-2xl bg-[#06a77d] px-4 py-3 text-3xl font-bold">
+            ✓ {(q.correct as string[]).join(" / ")}
+          </p>
+          {q.texts && q.texts.length > 0 && (
+            <ul className="mt-4 flex flex-wrap gap-2">
+              {q.texts.map((t) => (
+                <li
+                  key={t.text}
+                  className={`rounded-full px-3 py-1 text-sm font-extrabold ${t.is_correct ? "bg-[#06a77d]" : "bg-white/15"}`}
+                >
+                  {t.text} {t.count > 1 && <span className="opacity-70">×{t.count}</span>}
+                </li>
+              ))}
+            </ul>
           )}
         </div>
-
-        {q.type === "short_text" ? (
-          <div className="mt-5">
-            <p className="mb-2 text-sm font-bold text-white/70">Correct answer</p>
-            <p className="font-display rounded-2xl bg-[#06a77d] px-4 py-3 text-3xl font-bold">
-              ✓ {(q.correct as string[]).join(" / ")}
-            </p>
-            {q.texts && q.texts.length > 0 && (
-              <ul className="mt-4 flex flex-wrap gap-2">
-                {q.texts.map((t) => (
-                  <li
-                    key={t.text}
-                    className={`rounded-full px-3 py-1 text-sm font-extrabold ${t.is_correct ? "bg-[#06a77d]" : "bg-white/15"}`}
-                  >
-                    {t.text} {t.count > 1 && <span className="opacity-70">×{t.count}</span>}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        ) : (
-          <ul className="mt-5 grid gap-2.5">
-            {q.options.map((opt, i) => {
-              const st = OPTION_STYLES[i];
-              const n = q.counts?.[i] ?? 0;
-              const right = correctSet.has(i);
-              const dim = q.type !== "poll" && !right;
-              return (
-                <li key={i} className="flex items-center gap-3">
-                  <span
-                    className="font-display grid h-9 w-9 shrink-0 place-items-center rounded-lg text-base font-bold"
-                    style={{ background: st.bg }}
-                    aria-hidden
-                  >
-                    {st.letter}
-                  </span>
-                  <div
-                    className={`relative h-11 min-w-0 flex-1 overflow-hidden rounded-xl bg-black/25 ${right ? "ring-2 ring-[#4be3a6]" : ""}`}
-                  >
-                    <motion.div
-                      className="absolute inset-y-0 left-0 rounded-xl"
-                      style={{ background: right ? "#06a77d" : st.bg, opacity: dim ? 0.4 : 1 }}
-                      initial={{ width: 0 }}
-                      animate={{ width: `${(n / max) * 100}%` }}
-                      transition={{ type: "spring", stiffness: 110, damping: 20 }}
-                    />
-                    <span className="absolute inset-0 flex items-center px-3 text-base font-extrabold">
-                      <span className="truncate">{opt}</span>
-                      {right && <span className="ml-2">✓</span>}
-                    </span>
-                  </div>
-                  <span className="font-display w-9 text-right text-xl font-bold">{n}</span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
-
-      <section className="card p-5">
-        <h2 className="font-display mb-3 text-2xl font-semibold">Leaderboard</h2>
-        {top.length === 0 ? (
-          <p className="font-semibold text-white/60">No players yet.</p>
-        ) : (
-          <ol className="grid gap-2">
-            {top.map((p, i) => (
-              <motion.li
-                key={p.id}
-                layout
-                initial={{ opacity: 0, x: 16 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.07 * i }}
-                className="flex items-center gap-3 rounded-xl bg-white/10 px-3 py-2.5"
-              >
-                <span className="font-display w-9 text-center text-xl font-bold">{medal(p.rank)}</span>
-                <span className="min-w-0 flex-1 truncate text-lg font-extrabold">{p.name}</span>
-                <span className="font-display text-xl font-bold">
-                  <AnimatedNumber value={p.score} />
+      ) : q.type === "poll" ? (
+        <PollChart q={q} />
+      ) : (
+        <ul className="mt-5 grid gap-2.5">
+          {q.options.map((opt, i) => {
+            const st = OPTION_STYLES[i];
+            const n = q.counts?.[i] ?? 0;
+            const right = correctSet.has(i);
+            const dim = q.type !== "poll" && !right;
+            return (
+              <li key={i} className="flex items-center gap-3">
+                <span
+                  className="font-display grid h-9 w-9 shrink-0 place-items-center rounded-lg text-base font-bold"
+                  style={{ background: st.bg }}
+                  aria-hidden
+                >
+                  {st.letter}
                 </span>
-              </motion.li>
-            ))}
-          </ol>
-        )}
-        {data.players.length > 5 && (
-          <p className="mt-3 text-center text-sm font-bold text-white/60">
-            + {data.players.length - 5} more below
-          </p>
-        )}
-      </section>
-    </div>
+                <div
+                  className={`relative h-11 min-w-0 flex-1 overflow-hidden rounded-xl bg-black/25 ${right ? "ring-2 ring-[#4be3a6]" : ""}`}
+                >
+                  <motion.div
+                    className="absolute inset-y-0 left-0 rounded-xl"
+                    style={{ background: right ? "#06a77d" : st.bg, opacity: dim ? 0.4 : 1 }}
+                    initial={{ width: 0 }}
+                    animate={{ width: `${(n / max) * 100}%` }}
+                    transition={{ type: "spring", stiffness: 110, damping: 20 }}
+                  />
+                  <span className="absolute inset-0 flex items-center px-3 text-base font-extrabold">
+                    <span className="truncate">{opt}</span>
+                    {right && <span className="ml-2">✓</span>}
+                  </span>
+                </div>
+                <span className="font-display w-9 text-right text-xl font-bold">{n}</span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }
 
