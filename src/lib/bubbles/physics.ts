@@ -37,13 +37,15 @@ export type Rng = () => number;
 
 /** Bubble radius limits as a fraction of the container's shorter side. */
 const MIN_R_FRAC = 0.085;
-const MAX_R_FRAC = 0.2;
+const MAX_R_FRAC = 0.36; // the leading answer may grow to take up most of the stage
 const MIN_R_FLOOR = 22; // px, before the density cap
 const ABS_MIN_R = 13; // px, never smaller than this
-/** Larger counts grow quickly at first, then saturate towards the max radius. */
-const GROWTH_K = 4;
+/** The leader starts at this multiple of the smallest bubble... */
+const LEADER_START = 1.5;
+/** ...and keeps growing with every vote; a larger K means it takes more votes to level off. */
+const GROWTH_K = 22;
 /** All bubbles together may cover at most this share of the container. */
-const MAX_COVERAGE = 0.45;
+const MAX_COVERAGE = 0.5;
 const RESTITUTION = 0.9;
 const MAX_DT = 1 / 30;
 
@@ -63,32 +65,57 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 
 // ───────────────────────── Sizing ─────────────────────────
 
-/** Radius limits for a container (before the density cap). */
+/** Radius limits for a container: `min` is the smallest readable bubble, `max` the biggest the leader can reach. */
 export function radiusRange(bounds: Bounds): { min: number; max: number } {
   const m = Math.min(bounds.width, bounds.height);
   const min = Math.max(MIN_R_FLOOR, m * MIN_R_FRAC);
-  const max = Math.max(min * 1.5, m * MAX_R_FRAC);
+  const max = Math.max(min * 2, m * MAX_R_FRAC);
   return { min, max };
 }
 
-/** Radius for a bubble with `count` votes: never decreases as the count grows, always within [min, max]. */
-export function radiusFor(count: number, min: number, max: number): number {
-  const c = Math.max(1, count);
-  return min + (max - min) * (1 - Math.exp(-(c - 1) / GROWTH_K));
+/**
+ * Radius of the MOST-VOTED answer, which has `topCount` votes. It never stops growing as votes
+ * come in (the curve only slowly levels off towards `max`), so the leading word keeps swelling.
+ */
+export function leaderRadius(topCount: number, min: number, max: number): number {
+  const start = Math.min(max, min * LEADER_START);
+  const c = Math.max(1, topCount);
+  return start + (max - start) * (1 - Math.exp(-(c - 1) / GROWTH_K));
 }
 
 /**
- * Sizes every bubble for the container. If they would cover too much of it, all radii are
- * scaled down together (relative sizes are kept) so they can always fit.
+ * Sizes every bubble for the container.
+ *  - The most-voted answer is the biggest, and gets bigger with every vote it receives.
+ *  - Every other answer is sized by its share of the leader's votes (area proportional to votes),
+ *    but never below the smallest readable size.
+ *  - If it all would cover too much of the stage, the smaller bubbles shrink first so the leader keeps
+ *    its size; only if that still isn't enough does everything scale down together.
  */
 export function sizeBubbles(items: BubbleInput[], bounds: Bounds): SizedBubble[] {
   if (items.length === 0 || bounds.width <= 0 || bounds.height <= 0) return [];
   const { min, max } = radiusRange(bounds);
-  const raw = items.map((i) => radiusFor(i.count, min, max));
-  const area = raw.reduce((s, r) => s + Math.PI * r * r, 0);
+  const top = Math.max(1, ...items.map((i) => i.count));
+  const lead = leaderRadius(top, min, max);
+  const isLeader = items.map((i) => Math.max(1, i.count) === top);
+  const raw = items.map((i, idx) => (isLeader[idx] ? lead : Math.max(min, lead * Math.sqrt(Math.max(1, i.count) / top))));
+
   const avail = bounds.width * bounds.height * MAX_COVERAGE;
-  const scale = area > avail ? Math.sqrt(avail / area) : 1;
-  return items.map((i, idx) => ({ ...i, radius: Math.max(ABS_MIN_R, raw[idx] * scale) }));
+  const limit = avail * (1 + 1e-9); // tolerate floating-point dust
+  const areaOf = (rs: number[]) => rs.reduce((s, r) => s + Math.PI * r * r, 0);
+  let radii = raw;
+  if (areaOf(radii) > limit) {
+    const leadersArea = areaOf(raw.filter((_, i) => isLeader[i]));
+    const othersArea = areaOf(raw.filter((_, i) => !isLeader[i]));
+    if (othersArea > 0 && leadersArea < avail) {
+      const s = Math.sqrt((avail - leadersArea) / othersArea);
+      radii = raw.map((r, i) => (isLeader[i] ? r : Math.max(ABS_MIN_R, r * s)));
+    }
+    if (areaOf(radii) > limit) {
+      const s = Math.sqrt(avail / areaOf(radii));
+      radii = radii.map((r) => Math.max(ABS_MIN_R, r * s));
+    }
+  }
+  return items.map((i, idx) => ({ ...i, radius: radii[idx] }));
 }
 
 // ───────────────────────── Syncing with new data ─────────────────────────

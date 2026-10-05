@@ -20,7 +20,7 @@ const COLORS = [
 function fontSizeFor(radius: number, text: string): number {
   const longest = Math.max(1, ...text.split(/\s+/).map((w) => [...w].length));
   const fit = (2.5 * radius) / longest;
-  return Math.max(9, Math.min(22, radius * 0.38, fit));
+  return Math.max(9, Math.min(56, radius * 0.38, fit));
 }
 
 /** Stable colour per answer, so a bubble keeps its colour across screens and refreshes. */

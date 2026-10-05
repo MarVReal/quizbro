@@ -5,7 +5,7 @@ import {
   dragTo,
   mulberry32,
   packLayout,
-  radiusFor,
+  leaderRadius,
   radiusRange,
   reconcile,
   release,
@@ -55,38 +55,73 @@ describe("mulberry32", () => {
 });
 
 describe("sizing", () => {
-  test("radius never shrinks as the count grows and stays inside [min, max]", () => {
+  const total = (sized: { radius: number }[]) => sized.reduce((s, b) => s + Math.PI * b.radius ** 2, 0);
+
+  test("the leader's radius keeps growing as its votes grow, and stays within its limits", () => {
     const { min, max } = radiusRange(desktop);
     let prev = 0;
-    for (let c = 1; c <= 500; c++) {
-      const r = radiusFor(c, min, max);
-      assert.ok(r >= prev - 1e-9, `count ${c}`);
-      assert.ok(r >= min - 1e-9 && r <= max + 1e-9);
+    for (let c = 1; c <= 200; c++) {
+      const r = leaderRadius(c, min, max);
+      assert.ok(r > prev, `count ${c} must be bigger than ${c - 1}`);
+      assert.ok(r >= min && r <= max);
       prev = r;
     }
-    assert.equal(radiusFor(1, min, max), min);
-    assert.equal(radiusFor(0, min, max), min, "counts below 1 are treated as 1");
-    assert.ok(radiusFor(2, min, max) > min, "a second vote visibly grows the bubble");
+    assert.equal(leaderRadius(0, min, max), leaderRadius(1, min, max), "counts below 1 are treated as 1");
+    assert.ok(leaderRadius(2, min, max) > leaderRadius(1, min, max) + 2, "a second vote is clearly visible");
+    assert.ok(leaderRadius(40, min, max) > leaderRadius(30, min, max) + 1, "still swelling at 40 votes");
   });
 
-  test("a few bubbles keep a readable size", () => {
+  test("the most-voted word keeps getting bigger as it collects votes, on any screen", () => {
+    for (const bounds of [desktop, phone]) {
+      let prev = 0;
+      for (let votes = 1; votes <= 60; votes++) {
+        const sized = sizeBubbles(
+          [{ key: "data", text: "DATA", count: votes }, ...items([1, 1, 2, 1, 3, 1, 1, 2]).map((i) => ({ ...i, key: "o" + i.key }))],
+          bounds,
+        );
+        const data = sized.find((b) => b.key === "data")!;
+        assert.ok(data.radius > prev, `${votes} votes: ${data.radius} should beat ${prev}`);
+        prev = data.radius;
+      }
+    }
+  });
+
+  test("the leader is the biggest bubble, and the rest are sized by their share of its votes", () => {
+    const sized = sizeBubbles(items([4, 16, 1, 9]), desktop);
+    const [a, lead, one, nine] = sized;
+    assert.ok(lead.radius > nine.radius && nine.radius > a.radius && a.radius > one.radius);
+    // area proportional to votes: 4 votes is half the radius of 16 votes (when above the floor)
+    assert.ok(Math.abs(a.radius / lead.radius - 0.5) < 1e-9);
+    assert.ok(Math.abs(nine.radius / lead.radius - 0.75) < 1e-9);
+  });
+
+  test("everyone keeps a readable size, even answers with a single vote next to a big leader", () => {
     const sized = sizeBubbles(items([1, 1, 1]), phone);
     for (const s of sized) assert.ok(s.radius >= 22);
+    const mixed = sizeBubbles(items([40, 1, 1, 1]), desktop);
+    for (const s of mixed) assert.ok(s.radius >= radiusRange(desktop).min - 1e-9);
   });
 
-  test("bigger count means bigger bubble; order and keys are preserved", () => {
-    const sized = sizeBubbles(items([1, 5, 12]), desktop);
-    assert.deepEqual(sized.map((s) => s.key), ["k0", "k1", "k2"]);
-    assert.ok(sized[0].radius < sized[1].radius && sized[1].radius < sized[2].radius);
+  test("ties share the lead and are the same size", () => {
+    const sized = sizeBubbles(items([5, 5, 2]), desktop);
+    assert.equal(sized[0].radius, sized[1].radius);
+    assert.ok(sized[0].radius > sized[2].radius);
   });
 
-  test("a crowd is scaled down together so it fits, keeping relative sizes", () => {
-    const many = items(Array.from({ length: 50 }, (_, i) => (i === 0 ? 9 : 1)));
-    const sized = sizeBubbles(many, phone);
-    const covered = sized.reduce((s, b) => s + Math.PI * b.radius ** 2, 0);
-    assert.ok(covered <= phone.width * phone.height * 0.45 + 1, `coverage ${covered}`);
+  test("a crowd shrinks the small bubbles first, so the leader keeps its size", () => {
+    const { min, max } = radiusRange(phone);
+    const crowd = items(Array.from({ length: 50 }, (_, i) => (i === 0 ? 9 : 1)));
+    const sized = sizeBubbles(crowd, phone);
+    assert.equal(sized[0].radius, leaderRadius(9, min, max), "leader untouched");
+    assert.ok(total(sized) <= phone.width * phone.height * 0.5 + 1, `coverage ${total(sized)}`);
     assert.ok(sized[0].radius > sized[1].radius);
     for (const s of sized) assert.ok(s.radius >= 13);
+  });
+
+  test("when even that isn't enough (everyone tied) all bubbles scale down together", () => {
+    const sized = sizeBubbles(items(Array.from({ length: 50 }, () => 3)), phone);
+    assert.ok(total(sized) <= phone.width * phone.height * 0.5 + 1);
+    assert.equal(new Set(sized.map((s) => s.radius)).size, 1);
   });
 
   test("nothing to size, or no room", () => {
