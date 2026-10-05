@@ -3,7 +3,11 @@ export type QuestionType =
   | "multiple_select"
   | "true_false"
   | "short_text"
-  | "poll";
+  | "poll"
+  | "multi_answer";
+
+/** Question types with no right answer: no key, no points, no leaderboard impact. */
+export const isUnscored = (type: QuestionType) => type === "poll" || type === "multi_answer";
 
 export type ThemeId = "grape" | "sunset" | "ocean" | "mint" | "candy";
 
@@ -18,6 +22,12 @@ export const QUESTION_TYPES: {
   { id: "true_false", label: "True / False", emoji: "⚖️", hint: "Quick fire" },
   { id: "short_text", label: "Type answer", emoji: "⌨️", hint: "Players type it in" },
   { id: "poll", label: "Poll", emoji: "📊", hint: "No right answer, no points" },
+  {
+    id: "multi_answer",
+    label: "Multi-answer",
+    emoji: "🫧",
+    hint: "Everyone types a few answers; matching ones merge into live bubbles",
+  },
 ];
 
 /** A question as edited in the builder. */
@@ -33,6 +43,9 @@ export interface DraftQuestion {
   accepted: string[];
   time_limit: number;
   points: number;
+  /** multi_answer only: how many answers one person may give, and how long each can be. */
+  max_answers: number;
+  max_chars: number;
 }
 
 export type GameStatus = "lobby" | "question" | "reveal" | "finished";
@@ -56,6 +69,22 @@ export interface PlayQuestion {
   options: string[];
   time_limit: number;
   points: number;
+  /** multi_answer only. */
+  max_answers?: number;
+  max_chars?: number;
+}
+
+/** One merged answer: everybody who typed the same thing (ignoring case/spacing) shares a bubble. */
+export interface BubbleItem {
+  key: string;
+  text: string;
+  count: number;
+}
+
+export interface BubbleData {
+  items: BubbleItem[];
+  /** Unique answers left out because of the cap. */
+  more: number;
 }
 
 export interface LeaderboardRow {
@@ -71,19 +100,19 @@ export interface ReviewRow {
   type: QuestionType;
   options: string[];
   correct: number[] | string[] | null;
-  answer: number[] | string | null;
+  answer: number[] | string | string[] | null;
   is_correct: boolean | null;
   points: number;
 }
 
 export interface RevealInfo {
-  /** Correct answer(s); null for polls. */
+  /** Correct answer(s); null for polls and multi-answer. */
   correct: number[] | string[] | null;
-  /** null for polls. */
+  /** null for polls and multi-answer. */
   is_correct: boolean | null;
   points: number;
   answered: boolean;
-  my_answer: number[] | string | null;
+  my_answer: number[] | string | string[] | null;
 }
 
 /** Everything a phone needs for the current moment of the game. */
@@ -106,6 +135,8 @@ export interface PlayState {
   answered?: boolean;
   answered_count?: number;
   reveal?: RevealInfo;
+  /** multi_answer: shown once you have submitted (and on reveal). */
+  bubbles?: BubbleData;
   /** finished */
   review?: ReviewRow[];
 }
@@ -135,6 +166,10 @@ export interface HostQuestion {
   avg_time_ms: number | null;
   counts: number[] | null;
   texts: { text: string; count: number; is_correct: boolean }[] | null;
+  max_answers: number;
+  max_chars: number;
+  /** multi_answer only. */
+  bubbles: BubbleData | null;
 }
 
 export interface HostDashboard {

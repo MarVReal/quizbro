@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { isUnscored } from "./types";
 import type {
   DraftQuestion,
   HostAction,
@@ -49,15 +50,16 @@ export function createQuiz(input: {
     type: q.type,
     prompt: q.prompt.trim(),
     image_url: q.image_url.trim() || null,
-    options: q.type === "short_text" ? [] : q.options.map((o) => o.trim()),
+    options: q.type === "short_text" || q.type === "multi_answer" ? [] : q.options.map((o) => o.trim()),
     correct:
       q.type === "short_text"
         ? q.accepted.map((a) => a.trim()).filter(Boolean)
-        : q.type === "poll"
+        : isUnscored(q.type)
           ? []
           : q.correct,
     time_limit: q.time_limit,
-    points: q.type === "poll" ? 0 : q.points,
+    points: isUnscored(q.type) ? 0 : q.points,
+    ...(q.type === "multi_answer" ? { max_answers: q.max_answers, max_chars: q.max_chars } : {}),
   }));
   return rpc<{ id: string; code: string }>("create_quiz", {
     p_title: input.title,
@@ -84,7 +86,7 @@ export const getPlayState = (playerId: string) =>
 export const submitAnswer = (
   playerId: string,
   questionId: string,
-  answer: number[] | string,
+  answer: number[] | string | string[],
 ) =>
   rpc<{ accepted: boolean }>("submit_answer", {
     p_player_id: playerId,

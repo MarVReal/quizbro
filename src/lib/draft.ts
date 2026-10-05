@@ -1,4 +1,5 @@
-import type { DraftQuestion, QuestionType, ThemeId } from "./types";
+import { MAX_ANSWERS, MAX_CHARS } from "./multi-answer";
+import { isUnscored, type DraftQuestion, type QuestionType, type ThemeId } from "./types";
 
 export interface Draft {
   title: string;
@@ -26,6 +27,8 @@ export function blankQuestion(type: QuestionType = "multiple_choice"): DraftQues
     accepted: [""],
     time_limit: 20,
     points: 1000,
+    max_answers: MAX_ANSWERS.default,
+    max_chars: MAX_CHARS.default,
   };
   return changeType(base, type);
 }
@@ -38,6 +41,13 @@ export function changeType(q: DraftQuestion, type: QuestionType): DraftQuestion 
     next.correct = q.correct.length ? [Math.min(q.correct[0], 1)] : [0];
   } else if (type === "short_text") {
     next.accepted = q.accepted.length ? q.accepted : [""];
+  } else if (type === "multi_answer") {
+    // No options and no key. Keep any options so switching back doesn't lose them.
+    if (q.type === "true_false") next.options = ["", "", "", ""];
+    next.correct = [];
+    // Drafts saved before this type existed have no limits yet.
+    next.max_answers = q.max_answers ?? MAX_ANSWERS.default;
+    next.max_chars = q.max_chars ?? MAX_CHARS.default;
   } else {
     let opts = q.type === "true_false" ? ["", "", "", ""] : [...q.options];
     while (opts.length < 2) opts.push("");
@@ -53,8 +63,8 @@ export function changeType(q: DraftQuestion, type: QuestionType): DraftQuestion 
     next.correct = next.correct.filter((i) => i < opts.length);
     if (type !== "poll" && next.correct.length === 0) next.correct = [0];
   }
-  if (type === "poll") next.points = 0;
-  else if (q.type === "poll" || next.points === 0) next.points = 1000;
+  if (isUnscored(type)) next.points = 0;
+  else if (isUnscored(q.type) || next.points === 0) next.points = 1000;
   return next;
 }
 
@@ -65,6 +75,13 @@ export function questionProblem(q: DraftQuestion): string | null {
     return "Image link must start with http:// or https://";
   if (q.type === "short_text") {
     return q.accepted.some((a) => a.trim()) ? null : "Add at least one accepted answer";
+  }
+  if (q.type === "multi_answer") {
+    if (!Number.isInteger(q.max_answers) || q.max_answers < MAX_ANSWERS.min || q.max_answers > MAX_ANSWERS.max)
+      return `Max answers must be ${MAX_ANSWERS.min}-${MAX_ANSWERS.max}`;
+    if (!Number.isInteger(q.max_chars) || q.max_chars < MAX_CHARS.min || q.max_chars > MAX_CHARS.max)
+      return `Max characters must be ${MAX_CHARS.min}-${MAX_CHARS.max}`;
+    return null;
   }
   if (q.options.some((o) => !o.trim())) return "Fill in every answer option";
   if (q.type !== "poll" && q.correct.length === 0) return "Mark the correct answer";

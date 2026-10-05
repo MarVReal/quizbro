@@ -9,7 +9,7 @@ import { createQuiz, newHostToken } from "@/lib/api";
 import { blankQuestion, draftProblem, questionProblem, type Draft } from "@/lib/draft";
 import { clearDraft, getDraft, saveDraft, saveMyQuiz } from "@/lib/storage";
 import { THEMES } from "@/lib/theme";
-import { QUESTION_TYPES, type DraftQuestion, type QuestionType } from "@/lib/types";
+import { QUESTION_TYPES, isUnscored, type DraftQuestion, type QuestionType } from "@/lib/types";
 
 const emptyDraft = (): Draft => ({
   title: "",
@@ -216,7 +216,8 @@ export default function CreatePage() {
                         </span>
                         <span className="block text-xs font-bold text-white/60">
                           {meta.emoji} {meta.label} · {q.time_limit}s
-                          {q.type !== "poll" && ` · ${q.points} pts`}
+                          {!isUnscored(q.type) && ` · ${q.points} pts`}
+                          {q.type === "multi_answer" && ` · up to ${q.max_answers} answers`}
                           {problem && !open && <span className="ml-2 text-[#ffb3be]">⚠ {problem}</span>}
                         </span>
                       </span>
